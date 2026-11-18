@@ -26,7 +26,7 @@ test('src and api user allowlists match', () => {
   }
   assert.equal(isAppUserId('anna'), true)
   assert.equal(isAppUserId('nobody'), false)
-  assert.equal(userInitials('Anna'), 'AN')
+  assert.equal(userInitials('Ana'), 'AN')
   assert.equal(userInitials('Demo'), 'DE')
 })
 

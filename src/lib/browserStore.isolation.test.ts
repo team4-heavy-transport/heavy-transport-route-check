@@ -139,7 +139,7 @@ const users = await import('./users.ts')
 
 const annaJob = {
   id: 'job-anna-1',
-  name: 'Anna isolation job',
+  name: 'Ana isolation job',
   createdAt: '2026-03-12T08:00:00.000Z',
   updatedAt: '2026-03-12T08:00:00.000Z',
   vehicle: { width: 3, height: 4, length: 25, grossWeight: 52 },
@@ -180,7 +180,7 @@ test('stale write for user A does not land in user B cache or as a B PUT', async
   assert.ok(Array.isArray(annaServer) && annaServer[0]?.id === 'job-anna-1')
   assert.equal(annaServer[0]?.createdAt, annaJob.createdAt)
 
-  // Switch to Paul: flush Anna, clear cache, hydrate empty Paul.
+  // Switch to Paul: flush Ana, clear cache, hydrate empty Paul.
   await store.flushPendingSaves({ userId: 'anna' })
   await store.clearUserStore({ flush: false })
   await store.hydrateUserStore('paul')
@@ -188,11 +188,11 @@ test('stale write for user A does not land in user B cache or as a B PUT', async
   assert.equal(store.getCachedRaw(store.STORAGE_KEYS.savedJobs), undefined)
   assert.equal(store.getActiveUserId(), 'paul')
 
-  // Simulate late job-monitor / debounced save completing for Anna after the switch.
+  // Simulate late job-monitor / debounced save completing for Ana after the switch.
   store.writeJson(store.STORAGE_KEYS.savedJobs, [annaJob], { immediate: true, userId: 'anna' })
   store.writeJson(store.STORAGE_KEYS.checkHistory, [{
     id: 'check-anna-1',
-    permitName: 'Anna isolation job',
+    permitName: 'Ana isolation job',
     routeLabel: 'A → B',
     runAt: annaJob.createdAt,
     verdict: 'READY',
@@ -206,12 +206,12 @@ test('stale write for user A does not land in user B cache or as a B PUT', async
   assert.equal(store.getCachedRaw(store.STORAGE_KEYS.checkHistory), undefined)
 
   const paulPuts = putCalls.filter(call => call.user === 'paul')
-  assert.equal(paulPuts.length, 0, `Paul must not receive Anna's data: ${JSON.stringify(paulPuts)}`)
+  assert.equal(paulPuts.length, 0, `Paul must not receive Ana's data: ${JSON.stringify(paulPuts)}`)
 
   const paulServerJobs = serverState.get('paul')?.[store.STORAGE_KEYS.savedJobs]
   assert.ok(paulServerJobs == null || (Array.isArray(paulServerJobs) && paulServerJobs.length === 0))
 
-  // Anna's data remains intact on the server.
+  // Ana's data remains intact on the server.
   const annaAgain = serverState.get('anna')?.[store.STORAGE_KEYS.savedJobs] as typeof annaJob[]
   assert.equal(annaAgain[0]?.id, 'job-anna-1')
   assert.equal(annaAgain[0]?.createdAt, annaJob.createdAt)
@@ -226,7 +226,7 @@ test('in-flight persist for A cannot rewrite B cache after switch', async () => 
     const start = Date.now()
     const tick = () => {
       if (pendingPuts.some(p => p.user === 'anna')) resolve()
-      else if (Date.now() - start > 2000) reject(new Error('Anna PUT never held'))
+      else if (Date.now() - start > 2000) reject(new Error('Ana PUT never held'))
       else setTimeout(tick, 5)
     }
     tick()
@@ -259,8 +259,8 @@ test('in-flight persist for A cannot rewrite B cache after switch', async () => 
   const paulCache = store.readJson<Array<{ id?: string }>>(store.STORAGE_KEYS.savedJobs, [])
   assert.equal(paulCache.some(job => job.id === 'job-anna-1'), false)
 
-  // Anna still has her job on the server from the held PUT (if it committed) or prior — either way
-  // Paul must stay clean. Re-seed Anna path to assert intactness after a clean save.
+  // Ana still has her job on the server from the held PUT (if it committed) or prior — either way
+  // Paul must stay clean. Re-seed Ana path to assert intactness after a clean save.
   holdPuts = false
   await store.clearUserStore({ flush: false })
   await store.hydrateUserStore('anna')
