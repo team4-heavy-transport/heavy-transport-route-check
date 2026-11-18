@@ -215,11 +215,12 @@ test('checkOsmClearance falls back to VERIFY evidence when Overpass fails', asyn
     },
     endpoints: ['https://example.invalid/api/interpreter'],
     timeoutMs: 100,
+    budgetMs: 1500,
   })
   assert.equal(result.ok, false)
   assert.equal(result.evidence[0].id, 'bridge-clearance-unknown')
   assert.equal(result.evidence[0].blocker, true)
-  assert.match(result.evidence[0].detail, /failed|unavailable|network/i)
+  assert.match(result.evidence[0].detail, /failed|unavailable|network|budget/i)
 })
 
 test('parseOsmMapXml extracts ways with maxheight and bridge tags', () => {

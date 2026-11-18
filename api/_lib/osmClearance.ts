@@ -19,7 +19,10 @@ export const OSM_ATTRIBUTION =
 
 export const OSM_MATCH_DISTANCE_KM = 0.05
 export const OSM_CHUNK_POINTS = 80
-export const OSM_OVERPASS_TIMEOUT_MS = 22_000
+/** Per-request Overpass timeout. Keep short — Vercel Hobby maxDuration is 30s. */
+export const OSM_OVERPASS_TIMEOUT_MS = 8_000
+/** Hard wall-clock budget for the whole OSM clearance lookup (Overpass + fallback). */
+export const OSM_TOTAL_BUDGET_MS = 12_000
 export const OSM_OVERPASS_ENDPOINTS = [
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass-api.de/api/interpreter',
@@ -218,7 +221,7 @@ export function buildOverpassQuery(points: LatLngPoint[], padKm = 0.08): string 
   // every bridge in a large rectangle and trip Overpass timeouts.
   // Single union keeps worker time down vs many separate statements.
   return `
-[out:json][timeout:20];
+[out:json][timeout:8];
 (
   way(${around})["maxheight"];
   way(${around})["maxweight"];
@@ -359,7 +362,7 @@ function tagsFromXml(xml: string): Record<string, string> {
   return tags
 }
 
-function chunkBboxes(points: LatLngPoint[], maxSpanDeg = 0.04): Array<{ west: number; south: number; east: number; north: number }> {
+function chunkBboxes(points: LatLngPoint[], maxSpanDeg = 0.05): Array<{ west: number; south: number; east: number; north: number }> {
   const boxes: Array<{ west: number; south: number; east: number; north: number }> = []
   let start = 0
   while (start < points.length) {
@@ -391,7 +394,8 @@ function chunkBboxes(points: LatLngPoint[], maxSpanDeg = 0.04): Array<{ west: nu
     if (end === start) start += 1
     else start = end
   }
-  return boxes.slice(0, 8)
+  // Cap map-API work hard — long cycling GPX would otherwise exceed Hobby duration.
+  return boxes.slice(0, 4)
 }
 
 async function fetchOsmMapFallback(
@@ -723,6 +727,66 @@ export function buildOsmClearanceEvidence(
   }
 }
 
+async function fetchOsmElementsLive(opts: {
+  points: LatLngPoint[]
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+  endpoints?: readonly string[]
+  deadlineMs: number
+}): Promise<OverpassElement[]> {
+  const started = Date.now()
+  const remaining = () => Math.max(500, opts.deadlineMs - (Date.now() - started))
+  const chunks = chunkPoints(opts.points, OSM_CHUNK_POINTS)
+  // Prefer a few Overpass chunks; stop when the wall-clock budget is nearly spent.
+  const limited = chunks.slice(0, 4)
+  const collected: OverpassElement[] = []
+  const seen = new Set<string>()
+  let overpassError: string | null = null
+
+  try {
+    for (const chunk of limited) {
+      if (remaining() < 1500) break
+      const query = buildOverpassQuery(chunk)
+      const part = await fetchOverpassChunk(query, {
+        fetchImpl: opts.fetchImpl,
+        timeoutMs: Math.min(opts.timeoutMs ?? OSM_OVERPASS_TIMEOUT_MS, remaining()),
+        // One endpoint per attempt to stay inside the budget.
+        endpoints: (opts.endpoints || OSM_OVERPASS_ENDPOINTS).slice(0, 1),
+      })
+      for (const element of part) {
+        const key = `${element.type}/${element.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        collected.push(element)
+      }
+    }
+  } catch (error) {
+    overpassError = error instanceof Error ? error.message : 'Overpass failed'
+  }
+
+  if (!collected.length && remaining() > 2000) {
+    try {
+      // Public Overpass is often at capacity; OSM map API covers short corridor chunks.
+      const fallback = await fetchOsmMapFallback(opts.points, {
+        fetchImpl: opts.fetchImpl,
+        timeoutMs: Math.min(6_000, remaining()),
+      })
+      for (const element of fallback) {
+        const key = `${element.type}/${element.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        collected.push(element)
+      }
+    } catch (fallbackError) {
+      if (overpassError) throw new Error(overpassError)
+      void fallbackError
+    }
+  } else if (!collected.length && overpassError) {
+    throw new Error(overpassError)
+  }
+  return collected
+}
+
 export async function checkOsmClearance(opts: {
   points: LatLngPoint[]
   vehicle: VehicleDimensions
@@ -730,6 +794,7 @@ export async function checkOsmClearance(opts: {
   retrievedAt?: string
   fetchImpl?: typeof fetch
   timeoutMs?: number
+  budgetMs?: number
   endpoints?: readonly string[]
   /** Skip live Overpass (tests). */
   elements?: OverpassElement[]
@@ -737,53 +802,21 @@ export async function checkOsmClearance(opts: {
   const retrievedAt = opts.retrievedAt || new Date().toISOString()
   const corridor = opts.corridor
     || buildCorridorIndex(opts.points, 40)
+  const budgetMs = opts.budgetMs ?? OSM_TOTAL_BUDGET_MS
   try {
     let elements = opts.elements
     if (!elements) {
-      const chunks = chunkPoints(opts.points, OSM_CHUNK_POINTS)
-      // Bound total Overpass work for long GPX tracks.
-      const limited = chunks.slice(0, 6)
-      const collected: OverpassElement[] = []
-      const seen = new Set<string>()
-      let overpassError: string | null = null
-      try {
-        for (const chunk of limited) {
-          const query = buildOverpassQuery(chunk)
-          const part = await fetchOverpassChunk(query, {
-            fetchImpl: opts.fetchImpl,
-            timeoutMs: opts.timeoutMs,
-            endpoints: opts.endpoints,
-          })
-          for (const element of part) {
-            const key = `${element.type}/${element.id}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            collected.push(element)
-          }
-        }
-      } catch (error) {
-        overpassError = error instanceof Error ? error.message : 'Overpass failed'
-      }
-      if (!collected.length) {
-        try {
-          // Public Overpass is often at capacity; OSM map API covers short corridor chunks.
-          const fallback = await fetchOsmMapFallback(opts.points, {
-            fetchImpl: opts.fetchImpl,
-            timeoutMs: Math.min(opts.timeoutMs ?? OSM_OVERPASS_TIMEOUT_MS, 12_000),
-          })
-          for (const element of fallback) {
-            const key = `${element.type}/${element.id}`
-            if (seen.has(key)) continue
-            seen.add(key)
-            collected.push(element)
-          }
-        } catch (fallbackError) {
-          if (overpassError) throw new Error(overpassError)
-          // Overpass succeeded with an empty set — that is a valid "nothing nearby" result.
-          void fallbackError
-        }
-      }
-      elements = collected
+      const live = fetchOsmElementsLive({
+        points: opts.points,
+        fetchImpl: opts.fetchImpl,
+        timeoutMs: opts.timeoutMs,
+        endpoints: opts.endpoints,
+        deadlineMs: budgetMs,
+      })
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`OSM clearance budget exceeded (${budgetMs} ms)`)), budgetMs)
+      })
+      elements = await Promise.race([live, timeout])
     }
 
     const hits = elements
