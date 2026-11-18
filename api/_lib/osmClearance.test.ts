@@ -143,6 +143,33 @@ test('buildOsmClearanceEvidence emits HOLD conflicts and VERIFY unknowns', () =>
   assert.match(built.evidence[0].detail, /OpenStreetMap|ODbL/)
 })
 
+test('OSM attribution survives check-route place splitting', async () => {
+  const { splitConcatenatedPlaces } = await import('./autobahnTimes.ts')
+  const hits: OsmRestrictionHit[] = [{
+    osmType: 'way',
+    osmId: 4288068,
+    lat: 48.12,
+    lng: 11.55,
+    isBridge: false,
+    isTunnel: true,
+    tags: { maxheight: '3.6', name: 'Tumblingerstraße' },
+    distanceKm: 0.01,
+  }]
+  const built = buildOsmClearanceEvidence(hits, {
+    width: 2.5,
+    height: 3.4,
+    length: 12,
+    grossWeight: 18,
+  }, '2026-11-18T12:00:00.000Z')
+  for (const item of built.evidence) {
+    const detail = splitConcatenatedPlaces(item.detail)
+    assert.match(detail, /OpenStreetMap/)
+    assert.match(detail, /ODbL/)
+    assert.doesNotMatch(detail, /Open – Street – Map/)
+    assert.doesNotMatch(detail, /ODb – L/)
+  }
+})
+
 test('buildOsmClearanceEvidence all-clear still asks for dispatcher confirm', () => {
   const hits: OsmRestrictionHit[] = [{
     osmType: 'way',

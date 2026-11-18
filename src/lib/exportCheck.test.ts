@@ -247,6 +247,8 @@ test('PDF and CSV list OSM clearance conflicts, unknown bridges, and ODbL attrib
   assert.match(csv, /Bridge · Testbrücke — no clearance data|Bridge ·Testbrücke/)
   assert.match(csv, /OpenStreetMap \(Overpass\) · ODbL|OpenStreetMap/)
   assert.match(csv, /ODbL/)
+  assert.doesNotMatch(csv, /Open – Street – Map/)
+  assert.doesNotMatch(csv, /ODb – L/)
 
   const extracted = decodePdfStrings(pdfBytesFromSnapshot(snapshot))
   assert.match(extracted.compact, /OSM clearance: 2 restrictions exceeded/)
@@ -254,4 +256,6 @@ test('PDF and CSV list OSM clearance conflicts, unknown bridges, and ODbL attrib
   assert.match(extracted.compact, /no clearance data/)
   assert.match(extracted.compact, /OpenStreetMap/)
   assert.match(extracted.compact, /ODbL/)
+  assert.doesNotMatch(extracted.compact, /Open\s*-\s*Street\s*-\s*Map/)
+  assert.doesNotMatch(extracted.compact, /ODb\s*-\s*L/)
 })
