@@ -47,10 +47,10 @@ export default function RequestOnSiteCheckDialog({
     <div className="dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="onsite-request-title">
       <div ref={dialogRef} className="dialog-content">
         <header>
-          <h2 id="onsite-request-title">Log an on-site check (demo)</h2>
+          <h2 id="onsite-request-title">Log an on-site check</h2>
           <p>
-            This demo only records a field-verification note{location ? ` for ${location}` : ''} to your account.
-            Nobody is notified — nothing is sent.
+            This saves a field-verification note{location ? ` for ${location}` : ''} to your account history.
+            No external notification is sent to a driver, escort, or authority.
           </p>
         </header>
         <div className="dialog-form">

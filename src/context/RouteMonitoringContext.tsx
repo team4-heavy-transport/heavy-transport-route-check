@@ -30,7 +30,7 @@ export type CheckHistoryRecord = {
     acknowledgedBy: string
     acknowledgedAt: string
   }>
-  /** Demo take-action lines (escalate / hold / on-site). Nothing was sent. */
+  /** Demo take-action lines (proceed / escalate / hold / on-site). Account-synced; no external notify. */
   actionsLog?: string[]
 }
 
@@ -108,7 +108,7 @@ type RouteMonitoringValue = {
   onSiteReports: Record<string, RouteEvidence[]>
   onSiteOutcomes: Record<string, OnSiteOutcome | undefined>
   recordCheck: (record: Omit<CheckHistoryRecord, 'id'> & { id?: string }) => CheckHistoryRecord
-  patchHistory: (id: string, patch: Partial<CheckHistoryRecord>) => void
+  patchHistory: (id: string, patch: Partial<CheckHistoryRecord>, opts?: { immediate?: boolean }) => void
   addAlert: (alert: NewAlertInput) => MonitoringAlert
   markAlertEscalated: (id: string) => void
   acknowledgeAlert: (id: string) => void
@@ -124,10 +124,10 @@ export function RouteMonitoringProvider({ children }: { children: ReactNode }) {
   const sessionUserIdRef = useRef<string | null>(getActiveUserId())
   sessionUserIdRef.current = getActiveUserId()
 
-  const writeForSession = (key: string, value: unknown) => {
+  const writeForSession = (key: string, value: unknown, opts?: { immediate?: boolean }) => {
     const userId = sessionUserIdRef.current
     if (!userId || getActiveUserId() !== userId) return
-    writeJson(key, value, { userId })
+    writeJson(key, value, { userId, immediate: opts?.immediate })
   }
 
   const [history, setHistory] = useState<CheckHistoryRecord[]>(() => (
@@ -157,10 +157,10 @@ export function RouteMonitoringProvider({ children }: { children: ReactNode }) {
     return saved
   }, [])
 
-  const patchHistory = useCallback<RouteMonitoringValue['patchHistory']>((id, patch) => {
+  const patchHistory = useCallback<RouteMonitoringValue['patchHistory']>((id, patch, opts) => {
     setHistory(current => {
       const next = current.map(item => item.id === id ? { ...item, ...patch } : item)
-      writeForSession(STORAGE_KEYS.checkHistory, next)
+      writeForSession(STORAGE_KEYS.checkHistory, next, { immediate: opts?.immediate })
       return next
     })
   }, [])

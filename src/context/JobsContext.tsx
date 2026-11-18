@@ -368,7 +368,9 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         const userId = sessionUserIdRef.current ?? getActiveUserId() ?? undefined
         writeJson(key, value, { immediate: true, userId })
       },
-      flushStore: () => flushPendingSaves({ userId: sessionUserIdRef.current ?? undefined }),
+      flushStore: async () => {
+        await flushPendingSaves({ userId: sessionUserIdRef.current ?? undefined })
+      },
       simulateVerdictChange: (jobId, verdict) => simulateVerdictChange(jobId, verdict),
       tickMs: window.__HT_TEST__?.tickMs,
       pdfBytesFromSnapshot: window.__HT_TEST__?.pdfBytesFromSnapshot ?? (() => {

@@ -6,6 +6,8 @@ import { useJobs } from '../context/JobsContext'
 import { dataSources } from '../data/dataSources'
 import { MONITOR_INTERVAL_OPTIONS } from '../lib/jobs'
 import { DEPARTURE_ESCALATION_MINUTES } from '../lib/monitoring'
+import { flushPendingSaves, getSyncStatus } from '../lib/browserStore'
+import { ACCOUNT_SAVE_FAILED, resolveDispatchPersistOutcome } from '../lib/dispatchActionPersist'
 
 const tabs = [
   { id: 'profile', label: 'Organisation profile', icon: User },
@@ -41,10 +43,17 @@ export default function Settings() {
     activeButton?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
   }, [activeTab])
 
-  const save = () => {
+  const save = async () => {
     const result = saveProfile()
     if (!result.ok) {
       setError(result.error)
+      setSaved(false)
+      return
+    }
+    await flushPendingSaves()
+    const synced = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+    if (!synced) {
+      setError(ACCOUNT_SAVE_FAILED)
       setSaved(false)
       return
     }
@@ -78,7 +87,7 @@ export default function Settings() {
             <span><Building2 size={18} /></span>
             <div>
               <strong>{profile.orgName || 'Dispatcher'}</strong>
-              <small className={complete ? 'status-complete' : ''}>{complete ? 'Saved locally' : 'No profile yet'}</small>
+              <small className={complete ? 'status-complete' : ''}>{complete ? 'Saved to your account' : 'No profile yet'}</small>
               {complete && <span className="verified-badge">Verification pending</span>}
             </div>
           </div>

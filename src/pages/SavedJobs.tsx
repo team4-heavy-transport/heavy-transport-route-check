@@ -19,6 +19,8 @@ import {
   type SavedJob,
 } from '../lib/jobs'
 import { DEPARTURE_ESCALATION_MINUTES } from '../lib/monitoring'
+import { flushPendingSaves, getSyncStatus } from '../lib/browserStore'
+import { resolveDispatchPersistOutcome } from '../lib/dispatchActionPersist'
 
 const emptyDraft = {
   name: '',
@@ -58,7 +60,7 @@ export default function SavedJobs() {
     })
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editing) return
     if (!draft.name.trim()) {
       setToast('Enter a job name.')
@@ -73,7 +75,9 @@ export default function SavedJobs() {
       monitorIntervalMinutes: Number(draft.monitorIntervalMinutes) || prefs.intervalMinutes,
     }, editing.id)
     setEditing(null)
-    setToast('Job updated. Saved to your account.')
+    await flushPendingSaves()
+    const ok = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+    setToast(ok ? 'Job updated. Saved to your account.' : "Couldn't save to your account")
   }
 
   const monitored = useMemo(() => jobs.filter(job => shouldMonitorJob(job)), [jobs])
@@ -177,7 +181,15 @@ export default function SavedJobs() {
                   <AlertTriangle size={16} />
                   <span>Delete this job from your account?</span>
                   <button type="button" className="btn-secondary" onClick={() => setConfirmId(null)}>Cancel</button>
-                  <button type="button" className="btn-primary" onClick={() => { deleteJob(job.id); setConfirmId(null); setToast('Job deleted.') }}>Delete</button>
+                  <button type="button" className="btn-primary" onClick={() => {
+                    void (async () => {
+                      deleteJob(job.id)
+                      setConfirmId(null)
+                      await flushPendingSaves()
+                      const ok = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+                      setToast(ok ? 'Job deleted.' : "Couldn't save to your account")
+                    })()
+                  }}>Delete</button>
                 </div>
               )}
             </article>

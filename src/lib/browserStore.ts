@@ -491,7 +491,11 @@ function bodyBytesFor(userId: string, key: string, serialized: string): number {
  * never the "current" user at flush time. When `opts.userId` is set, only that
  * user's pending keys are flushed (used before Switch user).
  */
-export async function flushPendingSaves(opts?: { beacon?: boolean; userId?: string }): Promise<void> {
+/**
+ * Flush pending saves. Returns true when every flushed key succeeded (or there
+ * was nothing to flush). Beacon/unload paths treat beacon/XHR success as ok.
+ */
+export async function flushPendingSaves(opts?: { beacon?: boolean; userId?: string }): Promise<boolean> {
   const filterUser = opts?.userId
   for (const [key, timer] of pendingTimers.entries()) {
     const pending = pendingSaves.get(key)
@@ -503,41 +507,40 @@ export async function flushPendingSaves(opts?: { beacon?: boolean; userId?: stri
   const entries = [...pendingSaves.entries()].filter(([, pending]) => (
     !filterUser || pending.userId === filterUser
   ))
-  if (entries.length === 0) return
+  if (entries.length === 0) return saveStatus !== 'error'
 
   // Shared across this unload flush only — Chrome's keepalive quota is per-tab.
   const keepaliveBudget: KeepaliveBudget | null = opts?.beacon ? createKeepaliveBudget() : null
 
-  await Promise.all(entries.map(async ([key, pending]) => {
+  const results = await Promise.all(entries.map(async ([key, pending]) => {
     const { userId, serialized } = pending
     if (opts?.beacon && keepaliveBudget) {
       let bodyBytes = 0
       try {
         bodyBytes = bodyBytesFor(userId, key, serialized)
       } catch {
-        await persistKey(key, serialized, userId)
-        return
+        return persistKey(key, serialized, userId)
       }
 
       if (reserveKeepaliveBytes(keepaliveBudget, bodyBytes)) {
         if (beaconSave(userId, key, serialized)) {
           pendingSaves.delete(key)
-          return
+          return true
         }
         // Beacon refused — try a single keepalive fetch against the reserved budget.
-        await persistKey(key, serialized, userId, 0, { keepalive: true })
-        return
+        return persistKey(key, serialized, userId, 0, { keepalive: true })
       }
 
       // Does not fit the shared keepalive budget: sync XHR best-effort.
       if (syncUnloadSave(userId, key, serialized)) {
         pendingSaves.delete(key)
-        return
+        return true
       }
     }
     // Normal flush (or unload fallback): never use keepalive.
-    await persistKey(key, serialized, userId)
+    return persistKey(key, serialized, userId)
   }))
+  return results.every(Boolean)
 }
 
 export async function hydrateUserStore(userId: string): Promise<SyncBackend> {
