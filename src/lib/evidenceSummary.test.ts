@@ -8,6 +8,13 @@ test('concatenated German place names get a separator', () => {
   assert.equal(joinLocationParts(['Bayreuth', 'Kulmbach']), 'Bayreuth / Kulmbach')
 })
 
+test('OpenStreetMap and ODbL stay intact in clearance attribution copy', () => {
+  const detail = 'OpenStreetMap restriction tags fit. © OpenStreetMap contributors. Open Database License (ODbL).'
+  assert.equal(splitConcatenatedPlaces(detail), detail)
+  assert.doesNotMatch(splitConcatenatedPlaces(detail), /Open – Street – Map/)
+  assert.doesNotMatch(splitConcatenatedPlaces(detail), /ODb – L/)
+})
+
 test('English summary keeps the original German aside and names type/road/dates', () => {
   const item: RouteEvidence = {
     id: 'a9-1',

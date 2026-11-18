@@ -110,3 +110,28 @@ test('result-screen clearance rewrites the bridge card and stale impact copy', (
   assert.doesNotMatch(ready.summary, /11\.09\.2026/)
   assert.match(ready.summary, /09\.11\.2026/)
 })
+
+test('clearance tick alone (OSM VERIFY, no other acks) yields READY with a clear title', () => {
+  const raw = result([{
+    id: 'bridge-clearance-unknown',
+    title: '3 OSM restrictions checked OK – confirm with permit/authority',
+    detail: 'OpenStreetMap restriction tags along the route fit this vehicle. © OpenStreetMap contributors. Data available under the Open Database License (ODbL).',
+    source: 'OpenStreetMap (Overpass) · ODbL',
+    age: '',
+    confidence: 'medium',
+    state: 'warning',
+    category: 'observations',
+    blocker: true,
+  }])
+  raw.clearanceConfirmed = false
+  raw.title = 'Verification required – bridge and clearance not confirmed'
+  raw.summary = 'Bridge and clearance are not dispatcher-confirmed.'
+  raw.impact = 'Selected vehicle: 2.50m W × 3.40m H. Bridge and clearance are not dispatcher-confirmed.'
+  const ready = applySiteAcknowledgements(raw, [], true, { by: 'Ana', at: '2026-11-18T15:10:00Z' })
+  assert.equal(ready.verdict, 'READY')
+  assert.match(ready.title, /^READY – bridge and clearance confirmed$/)
+  assert.match(ready.summary, /Clearance confirmed by Ana at/)
+  assert.match(ready.impact, /Clearance confirmed by Ana at/)
+  assert.equal(ready.evidence.some(item => item.id === 'bridge-clearance-confirmed'), true)
+  assert.equal(ready.evidence.some(item => item.id === 'bridge-clearance-unknown'), false)
+})

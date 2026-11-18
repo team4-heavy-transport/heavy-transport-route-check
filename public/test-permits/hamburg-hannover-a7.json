@@ -1,10 +1,10 @@
 {
   "permitNumber": "DE-HH-2026-01845",
-  "route": "Hamburg → Hannover via A7",
+  "route": "Hamburg \u2192 Hannover via A7",
   "origin": "Hamburg Port Terminal",
   "destination": "Hannover Logistics Hub",
-  "validFrom": "2026-11-10T00:00:00+01:00",
-  "validUntil": "2026-11-15T23:59:59+01:00",
+  "validFrom": "2026-11-01T00:00:00+01:00",
+  "validUntil": "2027-12-31T23:59:59+01:00",
   "corridor": "A7",
   "vehicle": {
     "width": 3.2,

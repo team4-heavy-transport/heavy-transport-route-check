@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="HTR OSM clearance sample" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>München Tumblingerstraße tunnel (maxheight 3.6 m)</name>
+  </metadata>
+  <trk>
+    <name>München → Tumblingerstraße tunnel</name>
+    <trkseg>
+      <trkpt lat="48.12350" lon="11.55280"><name>Start</name></trkpt>
+      <trkpt lat="48.12280" lon="11.55340"></trkpt>
+      <trkpt lat="48.12220" lon="11.55390"></trkpt>
+      <trkpt lat="48.12163" lon="11.55416"><name>Tumblingerstraße tunnel</name></trkpt>
+      <trkpt lat="48.12110" lon="11.55450"></trkpt>
+      <trkpt lat="48.12050" lon="11.55500"><name>End</name></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

@@ -1,10 +1,10 @@
 {
   "permitNumber": "DE-BY-2026-04621",
-  "route": "München → Stuttgart via A8",
-  "origin": "München Wind Farm",
+  "route": "M\u00fcnchen \u2192 Stuttgart via A8",
+  "origin": "M\u00fcnchen Wind Farm",
   "destination": "Stuttgart Industrial Complex",
-  "validFrom": "2026-11-13T00:00:00+01:00",
-  "validUntil": "2026-11-20T23:59:59+01:00",
+  "validFrom": "2026-11-01T00:00:00+01:00",
+  "validUntil": "2027-12-31T23:59:59+01:00",
   "corridor": "A8",
   "vehicle": {
     "width": 3.3,
@@ -12,5 +12,5 @@
     "length": 30.0,
     "grossWeight": 65
   },
-  "routeDescription": "A8 motorway from München via Augsburg, Ulm to Stuttgart. Total distance approximately 219 km. Night transport 22:00-06:00 only."
+  "routeDescription": "A8 motorway from M\u00fcnchen via Augsburg, Ulm to Stuttgart. Total distance approximately 219 km. Night transport 22:00-06:00 only."
 }

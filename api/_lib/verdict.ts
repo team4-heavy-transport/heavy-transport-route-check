@@ -674,7 +674,7 @@ export function dedupeClassified(items: ClassifiedEvidence[], maxKm = DEDUPE_KM)
 }
 
 export function isSystemNote(id: string) {
-  return /^(mia-snapshot-|mia-deduped|bw-deduped|bw-unavailable|route-clear|bridge-clearance-|system-error)/.test(id)
+  return /^(mia-snapshot-|mia-deduped|bw-deduped|bw-unavailable|route-clear|bridge-clearance-|osm-unknown-|system-error)/.test(id)
 }
 
 export function isAcknowledgeable(
