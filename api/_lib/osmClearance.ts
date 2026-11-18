@@ -819,15 +819,39 @@ export async function checkOsmClearance(opts: {
   try {
     let elements = opts.elements
     if (!elements) {
-      // Deadline is enforced inside fetchOsmElementsLive so partial hits are kept
-      // instead of discarded by an outer Promise.race timeout.
-      elements = await fetchOsmElementsLive({
+      // Soft deadline inside fetchOsmElementsLive + hard wall-clock race so a stuck
+      // Overpass socket (common on CI runners) cannot hang check-route forever.
+      // The race returns whatever partial hits were collected instead of discarding them.
+      let partial: OverpassElement[] = []
+      const live = fetchOsmElementsLive({
         points: opts.points,
         fetchImpl: opts.fetchImpl,
         timeoutMs: opts.timeoutMs,
         endpoints: opts.endpoints,
         deadlineMs: budgetMs,
+      }).then(els => {
+        partial = els
+        return els
       })
+      const timedOut = await Promise.race([
+        live.then(() => false as const),
+        new Promise<true>(resolve => {
+          setTimeout(() => resolve(true), budgetMs)
+        }),
+      ])
+      if (timedOut) {
+        // Give the in-flight chunk a brief moment to land after abort timers fire.
+        await Promise.race([
+          live.catch(() => partial),
+          new Promise<void>(resolve => setTimeout(resolve, 400)),
+        ])
+        if (!partial.length) {
+          throw new Error(`OSM clearance budget exceeded (${budgetMs} ms)`)
+        }
+        elements = partial
+      } else {
+        elements = await live
+      }
     }
 
     const hits = elements
