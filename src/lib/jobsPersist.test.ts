@@ -50,7 +50,7 @@ function realisticJob(index: number, gpx = bremenGpx): SavedJob {
     lastSource: 'Autobahn GmbH MIA, Open Roadworks',
     monitoringStoppedReason: null,
     siteAcknowledgements: index % 5 === 0
-      ? [{ evidenceId: 'bridge-clearance-unknown', acknowledgedBy: 'Anna', acknowledgedAt: now }]
+      ? [{ evidenceId: 'bridge-clearance-unknown', acknowledgedBy: 'Ana', acknowledgedAt: now }]
       : undefined,
   }
 }

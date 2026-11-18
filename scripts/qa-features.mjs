@@ -2158,10 +2158,10 @@ async function main() {
     JSON.stringify(multiJobAfterReload),
   )
 
-  // Per-user isolation: Anna's job must not appear for Paul.
+  // Per-user isolation: Ana's job must not appear for Paul.
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   // Collapsed-rail tooltips must escape overflow clipping (hover + focus-visible).
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -2222,7 +2222,7 @@ async function main() {
     routeTip.content.includes('Route checks') && Number(routeTip.opacity) > 0.9,
     JSON.stringify(routeTip),
   )
-  const annaChip = page.getByRole('button', { name: /Switch user \(Anna\)/i }).first()
+  const annaChip = page.getByRole('button', { name: /Switch user \(Ana\)/i }).first()
   await annaChip.hover()
   await page.waitForTimeout(80)
   let annaTip = await annaChip.evaluate(el => {
@@ -2238,8 +2238,8 @@ async function main() {
     })
   }
   record(
-    'Collapsed Anna chip tooltip shows Anna · Switch user',
-    /Anna/i.test(annaTip.content) && /Switch user/i.test(annaTip.content) && Number(annaTip.opacity) > 0.9,
+    'Collapsed Ana chip tooltip shows Ana · Switch user',
+    /Ana/i.test(annaTip.content) && /Switch user/i.test(annaTip.content) && Number(annaTip.opacity) > 0.9,
     JSON.stringify(annaTip),
   )
   try {
@@ -2256,7 +2256,7 @@ async function main() {
     await page.getByRole('link', { name: 'Jobs' }).first().click()
   }
   await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).first().waitFor({ timeout: 15000 }).catch(() => {})
-  const annaJobName = `Anna isolation ${Date.now()}`
+  const annaJobName = `Ana isolation ${Date.now()}`
   const annaSaved = await page.evaluate(async (name) => {
     const job = {
       id: `job-anna-${Date.now()}`,
@@ -2283,13 +2283,13 @@ async function main() {
   }, annaJobName)
   // Remount providers from store without a full document reload race.
   await page.getByRole('button', { name: 'Switch user' }).first().click()
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
     await page.getByRole('link', { name: 'Jobs' }).first().click()
   }
   await page.getByText(annaJobName).first().waitFor({ timeout: 15000 })
-  record('Anna can save a job to her account', annaSaved && await page.getByText(annaJobName).count() > 0, annaJobName)
+  record('Ana can save a job to her account', annaSaved && await page.getByText(annaJobName).count() > 0, annaJobName)
 
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
@@ -2299,7 +2299,7 @@ async function main() {
     await page.getByRole('link', { name: 'Jobs' }).first().click()
   }
   await page.waitForTimeout(400)
-  const paulSeesAnna = await page.getByText(annaJobName).count()
+  const paulSeesAna = await page.getByText(annaJobName).count()
   const paulApi = await page.evaluate(async (name) => {
     const res = await fetch('/api/state?user=paul')
     const payload = await res.json()
@@ -2307,11 +2307,11 @@ async function main() {
     const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || [])
     return Array.isArray(parsed) ? parsed.filter(item => item?.name === name).length : -1
   }, annaJobName)
-  record('Paul does not see Anna’s job', paulSeesAnna === 0 && paulApi === 0, `ui=${paulSeesAnna} api=${paulApi}`)
+  record('Paul does not see Ana’s job', paulSeesAna === 0 && paulApi === 0, `ui=${paulSeesAna} api=${paulApi}`)
 
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
     await page.getByRole('link', { name: 'Jobs' }).first().click()
@@ -2330,23 +2330,23 @@ async function main() {
     }
   }, annaJobName)
   record(
-    'Switching back to Anna restores her job',
+    'Switching back to Ana restores her job',
     annaSeesAgain > 0 || annaApiAgain.api > 0 || annaApiAgain.hook > 0,
     JSON.stringify({ ui: annaSeesAgain, ...annaApiAgain }),
   )
 
-  // Race: Anna has a job + delayed re-check / pending save; switch to Paul within ~1s.
-  // Paul must stay empty; Anna's job (same createdAt) must stay intact.
-  const raceJobName = `Anna race ${Date.now()}`
+  // Race: Ana has a job + delayed re-check / pending save; switch to Paul within ~1s.
+  // Paul must stay empty; Ana's job (same createdAt) must stay intact.
+  const raceJobName = `Ana race ${Date.now()}`
   const raceCreatedAt = new Date().toISOString()
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
-  // Switch user must clear htr-current-user so reload does not auto-sign Anna back in.
+  // Switch user must clear htr-current-user so reload does not auto-sign Ana back in.
   const storedAfterSwitch = await page.evaluate(() => {
     try { return localStorage.getItem('htr-current-user') } catch { return 'err' }
   })
   record('Switch user clears htr-current-user', storedAfterSwitch == null, `stored=${storedAfterSwitch}`)
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   await page.waitForFunction(() => Boolean(window.__HT_TEST__?.setStore), null, { timeout: 20000 })
 
@@ -2401,7 +2401,7 @@ async function main() {
   await page.evaluate(() => { window.__HT_TEST__.tickMs = 50 })
   // Remount monitor interval by navigating; JobsProvider reads tickMs on mount.
   await page.getByRole('button', { name: 'Switch user' }).first().click()
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   await page.waitForFunction(() => Boolean(window.__HT_TEST__?.getJobs), null, { timeout: 20000 })
   await page.evaluate(async ({ name, createdAt }) => {
@@ -2454,17 +2454,17 @@ async function main() {
     return {
       apiJobs: Array.isArray(parsed) ? parsed.filter(item => item?.name === name).length : -1,
       hookJobs: hookJobs.filter(item => item?.name === name).length,
-      history: Array.isArray(history) ? history.filter(item => String(item?.permitName || '').includes('Anna race')).length : -1,
+      history: Array.isArray(history) ? history.filter(item => String(item?.permitName || '').includes('Ana race')).length : -1,
     }
   }, raceJobName)
   record(
-    'Quick switch: Paul stays empty after Anna in-flight re-check',
+    'Quick switch: Paul stays empty after Ana in-flight re-check',
     paulRaceUi === 0 && paulRaceApi.apiJobs === 0 && paulRaceApi.hookJobs === 0 && paulRaceApi.history === 0,
     JSON.stringify({ ui: paulRaceUi, ...paulRaceApi }),
   )
 
   await page.getByRole('button', { name: 'Switch user' }).first().click()
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
     await page.getByRole('link', { name: 'Jobs' }).first().click()
@@ -2483,7 +2483,7 @@ async function main() {
     }
   }, { name: raceJobName, createdAt: raceCreatedAt })
   record(
-    'Quick switch: Anna job intact with same createdAt',
+    'Quick switch: Ana job intact with same createdAt',
     annaRace.apiCreatedAt === raceCreatedAt || annaRace.hookCreatedAt === raceCreatedAt,
     JSON.stringify(annaRace),
   )
@@ -2491,7 +2491,7 @@ async function main() {
   // Account check-history sync: Bremen sample must survive reload on Alerts & history.
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
-  await page.getByRole('button', { name: 'Continue as Anna' }).click()
+  await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   const annaHistoryPayload = page.waitForRequest(
     req => req.url().includes('/api/check-route') && req.method() === 'POST',
@@ -2531,7 +2531,7 @@ async function main() {
     }
   })
   record(
-    'Anna Bremen check is present in GET /api/state history',
+    'Ana Bremen check is present in GET /api/state history',
     annaStateBeforeReload.hasKey && annaStateBeforeReload.count >= 1,
     JSON.stringify(annaStateBeforeReload),
   )
@@ -2541,7 +2541,7 @@ async function main() {
   const activityChecks = await page.locator('.check-history-log .route-alert-item').count()
   const activityEmpty = await page.getByRole('heading', { name: /No checks yet|No checks in this browser/i }).count()
   record(
-    'Alerts & history shows ≥1 check after reload for Anna',
+    'Alerts & history shows ≥1 check after reload for Ana',
     activityChecks >= 1 && activityEmpty === 0,
     `checks=${activityChecks} empty=${activityEmpty}`,
   )

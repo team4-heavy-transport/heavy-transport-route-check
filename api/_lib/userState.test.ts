@@ -41,9 +41,9 @@ test('resolveBackend falls back to memory without Redis env', () => {
 })
 
 test('memory backend read/write is per-user and isolated', async () => {
-  const writeAnna = await writeUserStateField('anna', 'htr-saved-jobs', [{ id: 'job-a' }])
-  assert.equal(writeAnna.backend, 'memory')
-  assert.ok(writeAnna.updatedAt)
+  const writeAna = await writeUserStateField('anna', 'htr-saved-jobs', [{ id: 'job-a' }])
+  assert.equal(writeAna.backend, 'memory')
+  assert.ok(writeAna.updatedAt)
 
   await writeUserStateField('paul', 'htr-saved-jobs', [{ id: 'job-p' }])
 
