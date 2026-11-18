@@ -203,12 +203,13 @@ export function applySiteAcknowledgements(
     }
   }
 
+  // Clearance tick alone (no other VERIFY acks) — do not keep a stale VERIFY title.
   return {
     ...result,
     evidence,
     verdict: 'READY',
-    title: result.title,
-    summary: result.summary,
+    title: 'READY – bridge and clearance confirmed',
+    summary: formatClearanceConfirmationLine(by, at) || result.summary,
     impact,
     clearanceConfirmed: true,
     clearanceConfirmedBy: by,

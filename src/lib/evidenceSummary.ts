@@ -4,10 +4,20 @@ import type { RouteEvidence } from '../data/routeChecks'
 const GERMAN_HINT = /[äöüÄÖÜß]|\b(Sperrung|Vollsperrung|Fahrbahn|Richtung|Baustelle|Sperr|Restbreite|Durchfahrtshöhe|Auffahrt|Abfahrt|beide)\b/
 
 export function splitConcatenatedPlaces(text: string): string {
-  return text
+  // CamelCase place splitting must not break product / license names in OSM copy.
+  // Tokens must themselves avoid camelCase or the splitter would still rewrite them.
+  const protectedNames = [
+    ['OpenStreetMap', '\uE000osmname\uE001'],
+    ['ODbL', '\uE000odblname\uE001'],
+  ] as const
+  let value = String(text || '')
+  for (const [raw, token] of protectedNames) value = value.split(raw).join(token)
+  value = value
     .replace(/([a-zäöüß])([A-ZÄÖÜ])/g, '$1 – $2')
     .replace(/\s{2,}/g, ' ')
     .trim()
+  for (const [raw, token] of protectedNames) value = value.split(token).join(raw)
+  return value
 }
 
 export function joinLocationParts(parts: unknown): string {

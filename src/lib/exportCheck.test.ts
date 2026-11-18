@@ -196,3 +196,62 @@ test('PDF wraps long evidence titles instead of clipping them', () => {
   assert.match(extracted.compact, /andauernder Baustelle/)
   assert.match(extracted.text, /Fahrtrichtung Süd/)
 })
+
+test('PDF and CSV list OSM clearance conflicts, unknown bridges, and ODbL attribution', () => {
+  const evidence: RouteEvidence[] = [
+    {
+      id: 'bridge-clearance-osm',
+      title: 'OSM clearance: 2 restrictions exceeded',
+      detail: '0 restrictions checked OK · 2 conflicts · 1 bridges/tunnels without data. © OpenStreetMap contributors. Data available under the Open Database License (ODbL). Crowd-sourced — not authoritative for dispatch.',
+      source: 'OpenStreetMap (Overpass) · ODbL',
+      age: '',
+      confidence: 'high',
+      state: 'warning',
+      category: 'observations',
+      blocker: false,
+    },
+    {
+      id: 'osm-conflict-way-4288068-maxheight',
+      title: 'Height limit 3.6 m vs vehicle 4.5 m',
+      detail: 'Tunnel · Tumblingerstraße: OSM maxheight=3.6 (3.6 m) vs vehicle 4.5 m. © OpenStreetMap contributors. Data available under the Open Database License (ODbL).',
+      source: 'OpenStreetMap (Overpass) · ODbL',
+      age: '',
+      confidence: 'high',
+      state: 'danger',
+      category: 'observations',
+      blocker: true,
+    },
+    {
+      id: 'osm-unknown-way-99',
+      title: 'Bridge · Testbrücke — no clearance data',
+      detail: 'OSM marks this as a bridge without maxheight/maxweight tags. Confirm with permit or authority. © OpenStreetMap contributors. Data available under the Open Database License (ODbL).',
+      source: 'OpenStreetMap (Overpass) · ODbL',
+      age: '',
+      confidence: 'medium',
+      state: 'warning',
+      category: 'observations',
+      blocker: false,
+    },
+  ]
+  const raw = baseResult(evidence)
+  raw.verdict = 'HOLD'
+  raw.title = 'Hold departure – blocking issue on route'
+  raw.summary = '1 blocking issue on the permitted mainline.'
+  raw.source = 'Autobahn GmbH + OpenStreetMap'
+  const snapshot = snapshotFromResult(raw, { permitName: 'munich-low-clearance.gpx' })
+  assert.equal(snapshot.evidence.length, 3)
+
+  const csv = snapshotToCsv(snapshot)
+  assert.match(csv, /OSM clearance: 2 restrictions exceeded/)
+  assert.match(csv, /Height limit 3\.6 m vs vehicle 4\.5 m/)
+  assert.match(csv, /Bridge · Testbrücke — no clearance data|Bridge ·Testbrücke/)
+  assert.match(csv, /OpenStreetMap \(Overpass\) · ODbL|OpenStreetMap/)
+  assert.match(csv, /ODbL/)
+
+  const extracted = decodePdfStrings(pdfBytesFromSnapshot(snapshot))
+  assert.match(extracted.compact, /OSM clearance: 2 restrictions exceeded/)
+  assert.match(extracted.compact, /Height limit 3\.6 m vs vehicle 4\.5 m/)
+  assert.match(extracted.compact, /no clearance data/)
+  assert.match(extracted.compact, /OpenStreetMap/)
+  assert.match(extracted.compact, /ODbL/)
+})
