@@ -1,10 +1,10 @@
 {
   "permitNumber": "DE-BY-2026-01009",
-  "route": "Hof → Bayreuth via A9",
+  "route": "Hof \u2192 Bayreuth via A9",
   "origin": "Hof A9",
   "destination": "Bayreuth A9",
-  "validFrom": "2026-11-09T00:00:00+01:00",
-  "validUntil": "2026-11-16T23:59:59+01:00",
+  "validFrom": "2026-11-01T00:00:00+01:00",
+  "validUntil": "2027-12-31T23:59:59+01:00",
   "vehicle": {
     "width": 2.55,
     "height": 4.0,
@@ -15,5 +15,5 @@
   "bridgeClearanceConfirmed": true,
   "clearanceConfirmedBy": "Sample dispatcher",
   "confirmedAt": "2026-11-09T08:00:00.000Z",
-  "routeDescription": "A9 motorway from Hof to Bayreuth, about 56 km. Sample — expected READY, live data may differ."
+  "routeDescription": "A9 motorway from Hof to Bayreuth, about 56 km. Sample \u2014 expected READY, live data may differ."
 }
