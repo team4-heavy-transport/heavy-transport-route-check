@@ -18,11 +18,13 @@ export const OSM_ATTRIBUTION =
   '© OpenStreetMap contributors. Data available under the Open Database License (ODbL). Crowd-sourced — not authoritative for dispatch.'
 
 export const OSM_MATCH_DISTANCE_KM = 0.05
-export const OSM_CHUNK_POINTS = 80
+export const OSM_CHUNK_POINTS = 100
 /** Per-request Overpass timeout. Keep short — Vercel Hobby maxDuration is 30s. */
-export const OSM_OVERPASS_TIMEOUT_MS = 8_000
+export const OSM_OVERPASS_TIMEOUT_MS = 10_000
 /** Hard wall-clock budget for the whole OSM clearance lookup (Overpass + fallback). */
-export const OSM_TOTAL_BUDGET_MS = 12_000
+export const OSM_TOTAL_BUDGET_MS = 18_000
+/** Cap sequential Overpass chunks so long GPX (e.g. Luis Munich) still finishes in budget. */
+export const OSM_MAX_CHUNKS = 2
 export const OSM_OVERPASS_ENDPOINTS = [
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass-api.de/api/interpreter',
@@ -221,7 +223,7 @@ export function buildOverpassQuery(points: LatLngPoint[], padKm = 0.08): string 
   // every bridge in a large rectangle and trip Overpass timeouts.
   // Single union keeps worker time down vs many separate statements.
   return `
-[out:json][timeout:8];
+[out:json][timeout:10];
 (
   way(${around})["maxheight"];
   way(${around})["maxweight"];
@@ -735,17 +737,23 @@ async function fetchOsmElementsLive(opts: {
   deadlineMs: number
 }): Promise<OverpassElement[]> {
   const started = Date.now()
-  const remaining = () => Math.max(500, opts.deadlineMs - (Date.now() - started))
+  const remaining = () => Math.max(0, opts.deadlineMs - (Date.now() - started))
   const chunks = chunkPoints(opts.points, OSM_CHUNK_POINTS)
-  // Prefer a few Overpass chunks; stop when the wall-clock budget is nearly spent.
-  const limited = chunks.slice(0, 4)
+  // Few chunks + larger step keeps long GPX (Luis Munich ~57 km) inside the budget.
+  const limited = chunks.slice(0, OSM_MAX_CHUNKS)
   const collected: OverpassElement[] = []
   const seen = new Set<string>()
   let overpassError: string | null = null
+  let chunksAttempted = 0
+  let stoppedEarly = false
 
   try {
     for (const chunk of limited) {
-      if (remaining() < 1500) break
+      if (remaining() < 1200) {
+        stoppedEarly = true
+        break
+      }
+      chunksAttempted += 1
       const query = buildOverpassQuery(chunk)
       const part = await fetchOverpassChunk(query, {
         fetchImpl: opts.fetchImpl,
@@ -764,6 +772,7 @@ async function fetchOsmElementsLive(opts: {
     overpassError = error instanceof Error ? error.message : 'Overpass failed'
   }
 
+  // Prefer partial Overpass hits over throwing when the budget is nearly spent.
   if (!collected.length && remaining() > 2000) {
     try {
       // Public Overpass is often at capacity; OSM map API covers short corridor chunks.
@@ -783,6 +792,10 @@ async function fetchOsmElementsLive(opts: {
     }
   } else if (!collected.length && overpassError) {
     throw new Error(overpassError)
+  }
+
+  if (!collected.length && (stoppedEarly || chunksAttempted === 0)) {
+    throw new Error(`OSM clearance budget exceeded (${opts.deadlineMs} ms)`)
   }
   return collected
 }
@@ -806,17 +819,15 @@ export async function checkOsmClearance(opts: {
   try {
     let elements = opts.elements
     if (!elements) {
-      const live = fetchOsmElementsLive({
+      // Deadline is enforced inside fetchOsmElementsLive so partial hits are kept
+      // instead of discarded by an outer Promise.race timeout.
+      elements = await fetchOsmElementsLive({
         points: opts.points,
         fetchImpl: opts.fetchImpl,
         timeoutMs: opts.timeoutMs,
         endpoints: opts.endpoints,
         deadlineMs: budgetMs,
       })
-      const timeout = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`OSM clearance budget exceeded (${budgetMs} ms)`)), budgetMs)
-      })
-      elements = await Promise.race([live, timeout])
     }
 
     const hits = elements
