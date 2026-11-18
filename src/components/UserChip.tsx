@@ -12,11 +12,12 @@ export default function UserChip({
   if (!user) return null
 
   const notSaved = saveStatus === 'error'
+  // In-memory /api/state is local/dev only. Never label a Redis-backed deploy as offline.
   const memoryBadge = syncBackend === 'memory'
   const titleBits = [
     user.name,
     notSaved ? 'Not saved' : null,
-    memoryBadge ? 'Not saved online (dev)' : null,
+    memoryBadge ? 'In-memory store (local)' : null,
     'Switch user',
   ].filter(Boolean)
   const tooltip = titleBits.join(' · ')
@@ -39,7 +40,7 @@ export default function UserChip({
         <span className="user-chip-name">{user.name}</span>
         {notSaved && <span className="user-chip-badge is-error">Not saved</span>}
         {memoryBadge && !notSaved && (
-          <span className="user-chip-badge is-dev">Not saved online (dev)</span>
+          <span className="user-chip-badge is-dev">In-memory store (local)</span>
         )}
       </div>
       {/* Compact chip is itself the switch control; keep the label visual-only. */}

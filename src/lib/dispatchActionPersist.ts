@@ -7,19 +7,19 @@ export const ACCOUNT_SAVE_FAILED = "Couldn't save to your account"
 
 export type DispatchPersistOutcome = 'synced' | 'failed'
 
-export function dispatchActionLogLine(
-  label: string,
-  outcome: DispatchPersistOutcome,
-): string {
-  const suffix = outcome === 'synced' ? DISPATCH_SAVED_NO_NOTIFY : ACCOUNT_SAVE_FAILED
-  return `${label} · ${suffix}`
+/**
+ * History line for a dispatch decision — action label only.
+ * Never embed toast/status text (that caused stale "Couldn't save" lines in Redis).
+ */
+export function dispatchActionLogLine(label: string): string {
+  return label.trim()
 }
 
 export function dispatchActionToast(outcome: DispatchPersistOutcome): string {
   return outcome === 'synced' ? DISPATCH_SAVED_NO_NOTIFY : ACCOUNT_SAVE_FAILED
 }
 
-/** After flushPendingSaves: account write succeeded when status is ok and nothing is still queued. */
+/** After waitForSyncIdle: account write succeeded when status is ok and nothing is still queued. */
 export function resolveDispatchPersistOutcome(status: {
   saveStatus: 'ok' | 'pending' | 'error'
   hasPending: boolean

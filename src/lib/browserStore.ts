@@ -80,6 +80,8 @@ const retryCounts = new Map<string, number>()
 const inflightControllers = new Map<string, AbortController>()
 const inflightSerialized = new Map<string, string>()
 const inflightUserIds = new Map<string, string>()
+/** Per-key persist promises so waiters can await the in-flight PUT (not just poll flags). */
+const inflightPromises = new Map<string, Promise<boolean>>()
 const listeners = new Set<SyncListener>()
 
 let activeUserId: string | null = null
@@ -268,6 +270,34 @@ async function persistKey(
   attempt = 0,
   opts?: { keepalive?: boolean },
 ): Promise<boolean> {
+  // Join an identical in-flight PUT before installing a new promise (avoids self-await deadlock).
+  const startDecision = decidePersistStart({
+    hasInflight: inflightControllers.has(key),
+    inflightSerialized: inflightSerialized.get(key) ?? null,
+    nextSerialized: serialized,
+  })
+  if (startDecision === 'skip-same-inflight' && inflightUserIds.get(key) === userId) {
+    const existing = inflightPromises.get(key)
+    if (existing) return existing
+  }
+
+  const run = persistKeyBody(key, serialized, userId, attempt, opts)
+  // Retries / replacements keep the newest promise visible to waitForSyncIdle.
+  inflightPromises.set(key, run)
+  try {
+    return await run
+  } finally {
+    if (inflightPromises.get(key) === run) inflightPromises.delete(key)
+  }
+}
+
+async function persistKeyBody(
+  key: string,
+  serialized: string,
+  userId: string,
+  attempt = 0,
+  opts?: { keepalive?: boolean },
+): Promise<boolean> {
   // Server write is always bound to the user captured at schedule time.
   // Skip only when a newer value for the same user replaced this one in pending/cache.
   const pending = pendingSaves.get(key)
@@ -284,8 +314,10 @@ async function persistKey(
     inflightSerialized: inflightSerialized.get(key) ?? null,
     nextSerialized: serialized,
   })
-  // Same body already in flight for this key — but only skip if it's the same user.
+  // Same body already in flight — join that PUT (promise map checked in persistKey).
   if (startDecision === 'skip-same-inflight' && inflightUserIds.get(key) === userId) {
+    const existing = inflightPromises.get(key)
+    if (existing) return existing
     return true
   }
 
@@ -492,24 +524,29 @@ function bodyBytesFor(userId: string, key: string, serialized: string): number {
  * user's pending keys are flushed (used before Switch user).
  */
 /**
- * Flush pending saves. Returns true when every flushed key succeeded (or there
- * was nothing to flush). Beacon/unload paths treat beacon/XHR success as ok.
- */
-/**
  * Flush, then wait until no pending/in-flight account writes remain.
  * Use before "Saved" toasts so we do not race an in-flight PUT.
+ *
+ * Important: a stale `saveStatus === 'error'` from an earlier key must NOT
+ * abort the wait while a newer PUT is still in flight — that caused false
+ * "Couldn't save" toasts even when Redis had already accepted the write.
  */
 export async function waitForSyncIdle(timeoutMs = 12_000): Promise<boolean> {
-  await flushPendingSaves()
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    if (saveStatus === 'error') return false
-    if (saveStatus === 'ok' && pendingSaves.size === 0 && inflightControllers.size === 0) {
-      return true
+    await flushPendingSaves()
+    const running = [...inflightPromises.values()]
+    if (running.length > 0) {
+      await Promise.all(running)
+      continue
     }
-    await new Promise(resolve => window.setTimeout(resolve, 40))
+    if (pendingSaves.size > 0 || inflightControllers.size > 0) {
+      await new Promise(resolve => window.setTimeout(resolve, 40))
+      continue
+    }
+    return saveStatus !== 'error'
   }
-  return saveStatus === 'ok' && pendingSaves.size === 0 && inflightControllers.size === 0
+  return saveStatus !== 'error' && pendingSaves.size === 0 && inflightControllers.size === 0 && inflightPromises.size === 0
 }
 
 export async function flushPendingSaves(opts?: { beacon?: boolean; userId?: string }): Promise<boolean> {
@@ -572,6 +609,7 @@ export async function hydrateUserStore(userId: string): Promise<SyncBackend> {
   inflightControllers.clear()
   inflightSerialized.clear()
   inflightUserIds.clear()
+  inflightPromises.clear()
   for (const timer of pendingTimers.values()) window.clearTimeout(timer)
   pendingTimers.clear()
   saveToastShown = false
@@ -615,6 +653,7 @@ export async function clearUserStore(opts?: { flush?: boolean }) {
   inflightControllers.clear()
   inflightSerialized.clear()
   inflightUserIds.clear()
+  inflightPromises.clear()
   for (const timer of pendingTimers.values()) window.clearTimeout(timer)
   pendingTimers.clear()
   setBackend(null)

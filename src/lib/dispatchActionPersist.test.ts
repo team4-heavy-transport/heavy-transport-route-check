@@ -25,15 +25,11 @@ test('failed toast admits account sync failed without local/demo wording', () =>
   assert.doesNotMatch(ACCOUNT_SAVE_FAILED, /demo/i)
 })
 
-test('log lines include action label and outcome wording', () => {
-  assert.equal(
-    dispatchActionLogLine('Proceed with departure', 'synced'),
-    `Proceed with departure · ${DISPATCH_SAVED_NO_NOTIFY}`,
-  )
-  assert.equal(
-    dispatchActionLogLine('Escalate', 'failed'),
-    `Escalate · ${ACCOUNT_SAVE_FAILED}`,
-  )
+test('history log lines are action labels only (no toast/status text)', () => {
+  assert.equal(dispatchActionLogLine('Proceed with departure'), 'Proceed with departure')
+  assert.equal(dispatchActionLogLine('Escalate'), 'Escalate')
+  assert.equal(dispatchActionLogLine('  Hold departure  '), 'Hold departure')
+  assert.doesNotMatch(dispatchActionLogLine('On-site check'), /Decision saved|Couldn't save|notification/i)
 })
 
 test('resolveDispatchPersistOutcome treats pending or error as failed', () => {
@@ -43,18 +39,18 @@ test('resolveDispatchPersistOutcome treats pending or error as failed', () => {
   assert.equal(resolveDispatchPersistOutcome({ saveStatus: 'error', hasPending: false }), 'failed')
 })
 
-test('saved toast never uses Logged locally / demo wording', () => {
-  assert.doesNotMatch(DISPATCH_SAVED_NO_NOTIFY, /local/i)
-  assert.doesNotMatch(ACCOUNT_SAVE_FAILED, /demo/i)
-})
-
 test('accountSaveToast only claims Saved after success', () => {
   assert.equal(accountSaveToast(true, 'Job saved and monitoring started.'), 'Job saved and monitoring started.')
   assert.equal(accountSaveToast(false, 'Job saved and monitoring started.'), ACCOUNT_SAVE_FAILED)
 })
 
+test('saved toast never uses Logged locally / demo wording', () => {
+  assert.doesNotMatch(DISPATCH_SAVED_NO_NOTIFY, /local/i)
+  assert.doesNotMatch(ACCOUNT_SAVE_FAILED, /demo/i)
+})
+
 test('actionsLog survives check-history compact + prepare for /api/state', () => {
-  const line = dispatchActionLogLine('Hold departure', 'synced')
+  const line = dispatchActionLogLine('Hold departure')
   const record = {
     id: 'check-1',
     permitName: 'Ana demo permit',

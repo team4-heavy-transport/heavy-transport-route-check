@@ -1830,7 +1830,8 @@ async function main() {
   const historyActions = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
   record(
     'Item 4: demo actions appear in check history',
-    /Decision saved – no external notification sent|Couldn't save to your account/i.test(historyActions),
+    /Escalate|Hold departure|On-site check/i.test(historyActions)
+      && !/Couldn't save to your account|Decision saved|Logged locally/i.test(historyActions),
     historyActions.slice(0, 220),
   )
   await page.reload({ waitUntil: 'domcontentloaded' })
@@ -1839,7 +1840,7 @@ async function main() {
   record(
     'Item 4: dispatch actions survive reload in Alerts & history',
     /Escalate|Hold departure|On-site check/i.test(historyActionsReload)
-      && /Decision saved – no external notification sent|Couldn't save to your account/i.test(historyActionsReload),
+      && !/Couldn't save to your account|Logged locally/i.test(historyActionsReload),
     historyActionsReload.slice(0, 220),
   )
 

@@ -66,7 +66,7 @@ function bremenStyleRecord(index: number): CheckHistoryRecord {
     jobId: index % 3 === 0 ? `job-${index}` : undefined,
     alertEligible: true,
     siteAcknowledgements: [],
-    actionsLog: index % 5 === 0 ? ['Escalate · Decision saved – no external notification sent'] : undefined,
+    actionsLog: index % 5 === 0 ? ['Escalate'] : undefined,
   }
 }
 

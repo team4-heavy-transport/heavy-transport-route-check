@@ -164,17 +164,14 @@ export default function RouteIntelligencePolished() {
   /** Record a dispatch decision on check history; toast only after /api/state confirms (or fails). */
   const logDemoAction = async (label: string) => {
     const id = lastHistoryId.current
+    const line = dispatchActionLogLine(label)
     const prior = (id ? history.find(item => item.id === id)?.actionsLog : undefined) || []
-    const syncedLine = dispatchActionLogLine(label, 'synced')
     if (id) {
-      patchHistory(id, { actionsLog: [...prior, syncedLine] }, { immediate: true })
+      // Store the action label only — never toast/status text (avoids stale failure lines in Redis).
+      patchHistory(id, { actionsLog: [...prior, line] }, { immediate: true })
     }
     const ok = await waitForSyncIdle()
-    const outcome = ok ? 'synced' as const : 'failed' as const
-    if (id && outcome === 'failed') {
-      patchHistory(id, { actionsLog: [...prior, dispatchActionLogLine(label, 'failed')] }, { immediate: true })
-    }
-    setToast(dispatchActionToast(outcome))
+    setToast(dispatchActionToast(ok ? 'synced' : 'failed'))
   }
 
   const confirmAccountSave = async (successMessage: string) => {
