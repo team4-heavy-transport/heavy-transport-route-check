@@ -1025,7 +1025,18 @@ async function main() {
   if (await safetyLayer.count()) {
     if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click()
     await page.waitForTimeout(300)
-    const safetyOn = await readCorridorKpis()
+    let safetyOn = await readCorridorKpis()
+    let safetyScope = 'Bavaria'
+    // Live Bavaria can temporarily have zero safety/warning signals; use Germany so the
+    // layer-off assertion still proves Warnings track the Safety layer.
+    if (!(safetyOn.safety > 0)) {
+      await page.getByRole('tab', { name: 'Germany' }).click()
+      await page.waitForTimeout(500)
+      if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click()
+      await page.waitForTimeout(300)
+      safetyOn = await readCorridorKpis()
+      safetyScope = 'Germany'
+    }
     await safetyLayer.click()
     await page.waitForTimeout(400)
     const safetyOff = await readCorridorKpis()
@@ -1037,7 +1048,7 @@ async function main() {
         && safetyOff.warnings === 0
         && safetyOff.safety === 0
         && safetyOff.matched < safetyOn.matched,
-      JSON.stringify({ safetyOn, safetyOff }),
+      JSON.stringify({ safetyScope, safetyOn, safetyOff }),
     )
     // Restore Safety layer for later layout checks.
     if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click().catch(() => {})
