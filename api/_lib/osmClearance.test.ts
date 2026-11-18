@@ -136,7 +136,10 @@ test('buildOsmClearanceEvidence emits HOLD conflicts and VERIFY unknowns', () =>
   assert.equal(built.checkedOk, 1)
   assert.ok(built.evidence.some(item => item.id.startsWith('osm-conflict-') && item.state === 'danger'))
   assert.ok(built.evidence.some(item => item.id.startsWith('osm-unknown-') && item.state === 'warning'))
-  assert.ok(built.evidence.some(item => item.id === 'bridge-clearance-osm'))
+  const summary = built.evidence.find(item => item.id === 'bridge-clearance-osm')
+  assert.ok(summary)
+  assert.equal(summary?.state, 'warning')
+  assert.equal(summary?.blocker, false)
   assert.match(built.evidence[0].detail, /OpenStreetMap|ODbL/)
 })
 

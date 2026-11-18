@@ -625,12 +625,13 @@ function summaryEvidence(opts: {
       detail: `${opts.checkedOk} restriction${opts.checkedOk === 1 ? '' : 's'} checked OK · ${opts.conflictCount} conflict${opts.conflictCount === 1 ? '' : 's'} · ${opts.unknownCount} bridge${opts.unknownCount === 1 ? '' : 's'}/tunnel${opts.unknownCount === 1 ? '' : 's'} without data. ${OSM_ATTRIBUTION}`,
       source: OSM_SOURCE,
       confidence: 'high',
-      state: 'danger',
+      // Informational rollup — individual osm-conflict-* items carry the HOLD.
+      state: 'warning',
       category: 'observations',
       distanceKm: null,
       reason: 'OSM restriction conflict on route.',
       locationKind: 'unknown',
-      blocker: true,
+      blocker: false,
       retrievedAt: opts.retrievedAt,
     }
   }
