@@ -19,8 +19,7 @@ import {
   type SavedJob,
 } from '../lib/jobs'
 import { DEPARTURE_ESCALATION_MINUTES } from '../lib/monitoring'
-import { flushPendingSaves, getSyncStatus } from '../lib/browserStore'
-import { resolveDispatchPersistOutcome } from '../lib/dispatchActionPersist'
+import { waitForSyncIdle } from '../lib/browserStore'
 
 const emptyDraft = {
   name: '',
@@ -75,8 +74,7 @@ export default function SavedJobs() {
       monitorIntervalMinutes: Number(draft.monitorIntervalMinutes) || prefs.intervalMinutes,
     }, editing.id)
     setEditing(null)
-    await flushPendingSaves()
-    const ok = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+    const ok = await waitForSyncIdle()
     setToast(ok ? 'Job updated. Saved to your account.' : "Couldn't save to your account")
   }
 
@@ -185,8 +183,7 @@ export default function SavedJobs() {
                     void (async () => {
                       deleteJob(job.id)
                       setConfirmId(null)
-                      await flushPendingSaves()
-                      const ok = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+                      const ok = await waitForSyncIdle()
                       setToast(ok ? 'Job deleted.' : "Couldn't save to your account")
                     })()
                   }}>Delete</button>

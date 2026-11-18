@@ -58,11 +58,10 @@ import {
 } from '../lib/siteAcknowledgements'
 import { displayEvidenceTitle, evidenceOriginalGerman, looksGerman, looksTechnical, splitConcatenatedPlaces } from '../lib/evidenceSummary'
 import { GPX_FRIENDLY_TOO_LARGE, GpxParseError, parseGpxDocument, serializeGpxTrack, validateGpxFileSize } from '../lib/gpxParse'
-import { flushPendingSaves, getSyncStatus } from '../lib/browserStore'
+import { waitForSyncIdle } from '../lib/browserStore'
 import {
   dispatchActionLogLine,
   dispatchActionToast,
-  resolveDispatchPersistOutcome,
 } from '../lib/dispatchActionPersist'
 
 const RouteMapGL = lazy(() => importWithChunkRecovery(() => import('../components/RouteMapGL')))
@@ -170,8 +169,8 @@ export default function RouteIntelligencePolished() {
     if (id) {
       patchHistory(id, { actionsLog: [...prior, syncedLine] }, { immediate: true })
     }
-    await flushPendingSaves()
-    const outcome = resolveDispatchPersistOutcome(getSyncStatus())
+    const ok = await waitForSyncIdle()
+    const outcome = ok ? 'synced' as const : 'failed' as const
     if (id && outcome === 'failed') {
       patchHistory(id, { actionsLog: [...prior, dispatchActionLogLine(label, 'failed')] }, { immediate: true })
     }
@@ -179,8 +178,7 @@ export default function RouteIntelligencePolished() {
   }
 
   const confirmAccountSave = async (successMessage: string) => {
-    await flushPendingSaves()
-    const ok = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+    const ok = await waitForSyncIdle()
     setToast(ok ? successMessage : "Couldn't save to your account")
     return ok
   }

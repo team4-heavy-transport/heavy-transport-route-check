@@ -43,6 +43,11 @@ test('resolveDispatchPersistOutcome treats pending or error as failed', () => {
   assert.equal(resolveDispatchPersistOutcome({ saveStatus: 'error', hasPending: false }), 'failed')
 })
 
+test('saved toast never uses Logged locally / demo wording', () => {
+  assert.doesNotMatch(DISPATCH_SAVED_NO_NOTIFY, /local/i)
+  assert.doesNotMatch(ACCOUNT_SAVE_FAILED, /demo/i)
+})
+
 test('accountSaveToast only claims Saved after success', () => {
   assert.equal(accountSaveToast(true, 'Job saved and monitoring started.'), 'Job saved and monitoring started.')
   assert.equal(accountSaveToast(false, 'Job saved and monitoring started.'), ACCOUNT_SAVE_FAILED)

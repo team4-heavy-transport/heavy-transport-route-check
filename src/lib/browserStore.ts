@@ -495,6 +495,23 @@ function bodyBytesFor(userId: string, key: string, serialized: string): number {
  * Flush pending saves. Returns true when every flushed key succeeded (or there
  * was nothing to flush). Beacon/unload paths treat beacon/XHR success as ok.
  */
+/**
+ * Flush, then wait until no pending/in-flight account writes remain.
+ * Use before "Saved" toasts so we do not race an in-flight PUT.
+ */
+export async function waitForSyncIdle(timeoutMs = 12_000): Promise<boolean> {
+  await flushPendingSaves()
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    if (saveStatus === 'error') return false
+    if (saveStatus === 'ok' && pendingSaves.size === 0 && inflightControllers.size === 0) {
+      return true
+    }
+    await new Promise(resolve => window.setTimeout(resolve, 40))
+  }
+  return saveStatus === 'ok' && pendingSaves.size === 0 && inflightControllers.size === 0
+}
+
 export async function flushPendingSaves(opts?: { beacon?: boolean; userId?: string }): Promise<boolean> {
   const filterUser = opts?.userId
   for (const [key, timer] of pendingTimers.entries()) {

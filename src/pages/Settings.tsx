@@ -6,8 +6,8 @@ import { useJobs } from '../context/JobsContext'
 import { dataSources } from '../data/dataSources'
 import { MONITOR_INTERVAL_OPTIONS } from '../lib/jobs'
 import { DEPARTURE_ESCALATION_MINUTES } from '../lib/monitoring'
-import { flushPendingSaves, getSyncStatus } from '../lib/browserStore'
-import { ACCOUNT_SAVE_FAILED, resolveDispatchPersistOutcome } from '../lib/dispatchActionPersist'
+import { waitForSyncIdle } from '../lib/browserStore'
+import { ACCOUNT_SAVE_FAILED } from '../lib/dispatchActionPersist'
 
 const tabs = [
   { id: 'profile', label: 'Organisation profile', icon: User },
@@ -50,8 +50,7 @@ export default function Settings() {
       setSaved(false)
       return
     }
-    await flushPendingSaves()
-    const synced = resolveDispatchPersistOutcome(getSyncStatus()) === 'synced'
+    const synced = await waitForSyncIdle()
     if (!synced) {
       setError(ACCOUNT_SAVE_FAILED)
       setSaved(false)
