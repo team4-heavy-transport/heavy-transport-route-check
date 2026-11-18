@@ -9,6 +9,30 @@ import stateHandler from '../api/state.ts'
 const dist = resolve(process.cwd(), 'dist')
 const port = Number(process.env.QA_PORT || 4173)
 
+// Feature QA must not call live Overpass / OSM map API — GitHub runners often
+// hang on those sockets and block check-route past Playwright's verdict wait.
+const originalFetch = globalThis.fetch.bind(globalThis)
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string'
+    ? input
+    : input instanceof URL
+      ? input.toString()
+      : input.url
+  if (/overpass-api\.de\/api\/interpreter/i.test(url)) {
+    return new Response(JSON.stringify({ elements: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  if (/api\.openstreetmap\.org\/api\/0\.6\/map/i.test(url)) {
+    return new Response('<osm version="0.6"></osm>', {
+      status: 200,
+      headers: { 'Content-Type': 'application/xml' },
+    })
+  }
+  return originalFetch(input, init)
+}) as typeof fetch
+
 const mime: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
