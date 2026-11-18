@@ -26,6 +26,7 @@ import {
 } from './_lib/openRoadworks.js';
 import { MIA_STALE_HOURS } from './_lib/mobidata.js';
 import { isScenarioId, SCENARIOS } from './_lib/scenarios.js';
+import { checkOsmClearance } from './_lib/osmClearance.js';
 import {
   classifyCandidate,
   dedupeClassified,
@@ -467,7 +468,7 @@ export default async function handler(
     }
 
     const retrievedAt = isoNow();
-    const [autobahnData, bwResult, miaResult] = await Promise.all([
+    const [autobahnData, bwResult, miaResult, osmResult] = await Promise.all([
       corridorUndetected
         ? Promise.resolve(null)
         : fetchAutobahnEventsForRoute(affectedRoads, retrievedAt),
@@ -478,6 +479,21 @@ export default async function handler(
           error: error instanceof Error ? error.message : 'BEMaS unavailable',
         })),
       resolveMiaSnapshot(),
+      checkOsmClearance({
+        points: geometry.matchPoints,
+        vehicle,
+        corridor: geometry.corridor,
+        retrievedAt,
+      }).catch((error: unknown) => ({
+        ok: false as const,
+        error: error instanceof Error ? error.message : 'Overpass failed',
+        retrievedAt,
+        hits: [],
+        conflicts: [],
+        unknownStructures: [],
+        checkedOk: 0,
+        evidence: [] as ClassifiedEvidence[],
+      })),
     ]);
     const autobahnHealth: AutobahnFetchHealth = corridorUndetected
       ? {
@@ -502,13 +518,14 @@ export default async function handler(
         };
     const degraded = corridorUndetected || !autobahnData || autobahnHealth.degraded;
     const degradedPartial = Boolean(autobahnData) && autobahnHealth.partial;
-    const source = corridorUndetected
+    const sourceBase = corridorUndetected
       ? 'Motorway undetected + MobiData BW'
       : degraded
         ? (degradedPartial
           ? 'Autobahn GmbH (partial) + MobiData BW'
           : 'Autobahn GmbH unavailable + MobiData BW')
-        : 'Autobahn GmbH + MobiData BW';
+        : 'Autobahn GmbH + MobiData BW'
+    const source = `${sourceBase} + OpenStreetMap`
     
     const classified: ClassifiedEvidence[] = [];
     const src = affectedRoads.length
@@ -739,6 +756,25 @@ export default async function handler(
       });
     }
 
+    // OSM bridge/clearance: conflicts HOLD; unknowns/partial stay VERIFY; Overpass
+    // failure falls back to the classic "not available" VERIFY card.
+    const osmEvidence = osmResult.evidence?.length
+      ? osmResult.evidence
+      : [{
+          id: 'bridge-clearance-unknown',
+          title: 'Bridge and clearance data not available',
+          detail: 'Unknown clearance cannot yield READY — confirm on site or tick dispatcher confirmation.',
+          source: 'Route check system',
+          confidence: 'medium' as const,
+          state: 'warning' as const,
+          category: 'observations' as const,
+          distanceKm: null,
+          reason: 'Clearance not confirmed.',
+          locationKind: 'unknown' as const,
+          blocker: true,
+          retrievedAt,
+        }]
+
     if (clearanceConfirmed) {
       uniqueClassified.push({
         id: 'bridge-clearance-confirmed',
@@ -753,22 +789,16 @@ export default async function handler(
         locationKind: 'unknown',
         blocker: false,
         retrievedAt: confirmedAt || retrievedAt,
-      });
+      })
+      // Keep conflict HOLD markers even when the dispatcher tick is present —
+      // a tick must not hide an OSM restriction the vehicle exceeds.
+      for (const item of osmEvidence) {
+        if (item.state === 'danger' && item.id.startsWith('osm-conflict-')) {
+          uniqueClassified.push(item)
+        }
+      }
     } else {
-      uniqueClassified.push({
-        id: 'bridge-clearance-unknown',
-        title: 'Bridge and clearance data not available',
-        detail: 'Unknown clearance cannot yield READY — confirm on site or tick dispatcher confirmation.',
-        source: 'Route check system',
-        confidence: 'medium',
-        state: 'warning',
-        category: 'observations',
-        distanceKm: null,
-        reason: 'Clearance not confirmed.',
-        locationKind: 'unknown',
-        blocker: true,
-        retrievedAt,
-      });
+      uniqueClassified.push(...osmEvidence)
     }
 
     const uniqueEvidence = uniqueClassified.map(item => {

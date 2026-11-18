@@ -285,8 +285,13 @@ const RouteMapGL = forwardRef<RouteMapHandle, Props>(({
     markers.current.forEach(marker => marker.remove());
     markers.current = [];
 
-    // Filter evidence by active layer
-    const layerEvidence = evidence.filter(e => e.category === activeLayer);
+    // Active layer plus always-on HOLD / OSM clearance markers so conflicts
+    // stay visible when the roadworks layer is selected.
+    const layerEvidence = evidence.filter(e =>
+      e.category === activeLayer
+      || e.state === 'danger'
+      || String(e.id).startsWith('osm-')
+    );
 
     // Add markers for evidence
     layerEvidence.forEach((item) => {

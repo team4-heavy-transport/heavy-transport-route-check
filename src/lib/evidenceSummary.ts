@@ -64,7 +64,7 @@ export function looksTechnical(text: string): boolean {
   return /situationRecord|publicationTime|latitude|longitude|gml:|DATEX|locationDescriptor|payloadPublication|Long-term MIA record|Short-term MIA record|Snapshot 20\d{2}-/i.test(text)
 }
 
-const KEEP_ORIGINAL_TITLE = /^(bridge-clearance-|mia-snapshot-|mia-deduped|bw-deduped|bw-unavailable|route-clear|system-error)/
+const KEEP_ORIGINAL_TITLE = /^(bridge-clearance-|osm-conflict-|osm-unknown-|mia-snapshot-|mia-deduped|bw-deduped|bw-unavailable|route-clear|system-error)/
 
 export function displayEvidenceTitle(item: RouteEvidence): string {
   if (KEEP_ORIGINAL_TITLE.test(item.id) || item.source === 'Dispatcher confirmation' || item.state === 'clear') {

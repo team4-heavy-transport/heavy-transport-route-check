@@ -77,11 +77,13 @@ export const dataSources: DataSourceNote[] = [
   },
   {
     id: 'bridge-clearance',
-    name: 'Bridge and clearance',
-    status: 'manual',
-    used: false,
-    summary: 'No free, keyless national bridge-height dataset is wired in.',
-    limitation: 'Always a confirm-on-site item. Unknown clearance cannot yield READY.',
+    name: 'Bridge and clearance (OpenStreetMap)',
+    status: 'live',
+    used: true,
+    summary: 'Each route check queries OpenStreetMap via the public Overpass API for maxheight, maxweight, maxwidth, maxlength, maxaxleload, and bridge/tunnel features near the GPX corridor. Vehicle dimensions are compared when tags parse; conflicts HOLD.',
+    limitation: 'OSM is crowd-sourced and not authoritative. Bridges/tunnels without restriction tags stay VERIFY. Overpass timeouts fall back to the dispatcher confirmation tick. READY still requires Ana (or another dispatcher) to confirm clearance.',
+    license: 'ODbL',
+    attribution: '© OpenStreetMap contributors. Data available under the Open Database License (ODbL).',
   },
   {
     id: 'background-monitor',

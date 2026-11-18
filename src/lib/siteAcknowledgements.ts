@@ -8,7 +8,7 @@ export type SiteAcknowledgement = {
   acknowledgedAt: string
 }
 
-const SYSTEM_NOTE = /^(mia-snapshot-|mia-deduped|bw-deduped|bw-unavailable|route-clear|bridge-clearance-|system-error)/
+const SYSTEM_NOTE = /^(mia-snapshot-|mia-deduped|bw-deduped|bw-unavailable|route-clear|bridge-clearance-|osm-unknown-|system-error)/
 
 export function isHoldItem(item: Pick<RouteEvidence, 'state'>) {
   return item.state === 'danger'
@@ -40,7 +40,9 @@ export function isConfirmOnSite(item: Pick<RouteEvidence, 'id' | 'title' | 'deta
   const text = `${item.title} ${item.detail}`
   return Boolean(item.longRunning)
     || item.id === 'bridge-clearance-unknown'
-    || /verify on site|confirm on site|bridge and clearance data not available/i.test(text)
+    || item.id === 'bridge-clearance-osm'
+    || String(item.id).startsWith('osm-unknown-')
+    || /verify on site|confirm on site|bridge and clearance data not available|confirm with permit|not authoritative/i.test(text)
 }
 
 export function confirmOnSiteTitles(evidence: RouteEvidence[]) {
@@ -116,7 +118,11 @@ function applyClearanceCard(
   }
   let found = false
   const next = evidence.map(item => {
-    if (item.id !== 'bridge-clearance-unknown' && item.id !== 'bridge-clearance-confirmed') return item
+    if (
+      item.id !== 'bridge-clearance-unknown'
+      && item.id !== 'bridge-clearance-confirmed'
+      && item.id !== 'bridge-clearance-osm'
+    ) return item
     found = true
     return { ...item, ...card }
   })

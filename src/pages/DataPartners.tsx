@@ -8,7 +8,7 @@ export default function DataPartners() {
       <Link to="/" className="route-back"><ArrowLeft size={16} /> Overview</Link>
       <MDSPlaceholder
         feature="Data Partners"
-        description="Partner feeds over the Mobility Data Space (MDS) would appear here. Live checks today use the keyless Autobahn GmbH API, a MIA DATEX snapshot via Mobilithek / MobiData BW, and Baden-Württemberg BEMaS roadworks. Bridge and clearance stay a manual dispatcher tick."
+        description="Partner feeds over the Mobility Data Space (MDS) would appear here. Live checks today use the keyless Autobahn GmbH API, a MIA DATEX snapshot via Mobilithek / MobiData BW, Baden-Württemberg BEMaS roadworks, and OpenStreetMap Overpass for bridge/clearance tags. OSM is crowd-sourced (ODbL) and not authoritative — Ana still confirms clearance before READY."
       />
       <section className="data-partners-plan">
         <h2>What is planned</h2>
