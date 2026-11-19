@@ -32,6 +32,7 @@ import { useRouteMonitoring } from '../context/RouteMonitoringContext'
 import { useJobs } from '../context/JobsContext'
 import { useOrgSettings } from '../context/OrgSettingsContext'
 import { formatBerlinDateTime } from '../lib/formatTime'
+import { formatVerdictCheckedMeta } from '../lib/verdictMeta'
 import { importWithChunkRecovery } from '../lib/chunkLoadRecovery'
 import type { RouteEvidence } from '../data/routeChecks'
 import { confirmOnSiteTitles, downloadSnapshot, formatStartLabel, pdfBytesFromSnapshot, sanitizePdfText, snapshotFromResult } from '../lib/exportCheck'
@@ -1362,9 +1363,16 @@ export default function RouteIntelligencePolished() {
                   Take action
                 </button>
               )}
-              <button type="button" className="btn-text" onClick={handleRecheck} disabled={checking}>
-                Re-check
-              </button>
+              <div className="verdict-recheck">
+                {formatVerdictCheckedMeta(displayed.retrievedAt, displayed.source) ? (
+                  <p className="verdict-checked-meta" data-testid="verdict-last-checked">
+                    {formatVerdictCheckedMeta(displayed.retrievedAt, displayed.source)}
+                  </p>
+                ) : null}
+                <button type="button" className="btn-text" onClick={handleRecheck} disabled={checking}>
+                  Re-check
+                </button>
+              </div>
             </div>
 
             {demoDepartureLabel ? (
@@ -1423,47 +1431,48 @@ export default function RouteIntelligencePolished() {
               <strong>⚠️ Important:</strong> This route check is an informational snapshot only. It does not grant permission to depart or replace official permit validity. Bridge clearances and local road conditions may require manual verification. Always confirm with authorities before departure.
             </div>
 
-            {/* Map and Evidence */}
+            {/* Map + short timeline; route details & evidence below in the main column */}
             <div className="results-layout">
-              <div className="results-main">
-                <Suspense fallback={<div className="results-map-fallback">Loading map…</div>}>
-                  <RouteMapGL
-                    ref={mapRef}
-                    coordinates={displayed.route.coordinates}
-                    origin={displayed.route.origin}
-                    destination={displayed.route.destination}
-                    evidence={displayed.evidence}
-                    verdict={displayed.verdict}
-                    activeLayer={activeLayer}
-                    layers={routeLayers}
-                    onLayerChange={setActiveLayer}
-                    className="results-map"
+              <div className="results-map-row">
+                <div className="results-main">
+                  <Suspense fallback={<div className="results-map-fallback">Loading map…</div>}>
+                    <RouteMapGL
+                      ref={mapRef}
+                      coordinates={displayed.route.coordinates}
+                      origin={displayed.route.origin}
+                      destination={displayed.route.destination}
+                      evidence={displayed.evidence}
+                      verdict={displayed.verdict}
+                      activeLayer={activeLayer}
+                      layers={routeLayers}
+                      onLayerChange={setActiveLayer}
+                      className="results-map"
+                    />
+                  </Suspense>
+                </div>
+
+                <div className="results-sidebar">
+                  <StatusTimeline result={displayed} permitNumber={permitNumber} monitoring={monitoring} />
+
+                  {loadedJob.current && (
+                    <MonitoringControls
+                      monitoring={monitoring}
+                      onStop={() => setMonitoring(false)}
+                      onResume={() => setMonitoring(true)}
+                      departureTime={plannedDeparture ? fromLocalInput(plannedDeparture) : undefined}
+                      nextCheckIn={jobInterval}
+                    />
+                  )}
+
+                  <InformationCheckedPanel
+                    result={displayed}
+                    expanded={showInfoChecked}
+                    onToggle={() => setShowInfoChecked(!showInfoChecked)}
                   />
-                </Suspense>
+                </div>
               </div>
 
-              <div className="results-sidebar">
-                {/* Status Timeline */}
-                <StatusTimeline result={displayed} permitNumber={permitNumber} monitoring={monitoring} />
-
-                {/* Monitoring Controls */}
-                {loadedJob.current && (
-                  <MonitoringControls
-                    monitoring={monitoring}
-                    onStop={() => setMonitoring(false)}
-                    onResume={() => setMonitoring(true)}
-                    departureTime={plannedDeparture ? fromLocalInput(plannedDeparture) : undefined}
-                    nextCheckIn={jobInterval}
-                  />
-                )}
-
-                {/* Information Checked Panel */}
-                <InformationCheckedPanel
-                  result={displayed}
-                  expanded={showInfoChecked}
-                  onToggle={() => setShowInfoChecked(!showInfoChecked)}
-                />
-
+              <div className="results-below">
                 <div className="results-summary">
                   <h3>Route details</h3>
                   <div className="summary-grid">

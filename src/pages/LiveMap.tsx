@@ -10,10 +10,10 @@ setWorkerUrl(workerUrl);
 import {
   AlertTriangle, ChevronDown, CircleParking, Clock3,
   Construction, Layers3, LocateFixed, Map as MapIcon, Maximize2,
-  Radio, RefreshCw, Route, Search, XCircle
+  Radio, RefreshCw, Search, XCircle
 } from 'lucide-react'
 import {
-  germanyOutline, roadVectors,
+  germanyOutline,
 } from '../data/germanyMap'
 import {
   type OperationalEvent, type OperationalEventType,
@@ -466,6 +466,13 @@ export default function LiveMap() {
     setActiveLayers(current => current.includes(id) ? current.filter(layer => layer !== id) : [...current, id])
   }
 
+  /** Click a summary counter to filter the list/map to that Autobahn feed type. */
+  const filterToLayer = (id: OperationalEventType) => {
+    setQuery('')
+    setActiveLayers([id])
+    setSelectedEvent(null)
+  }
+
   const focusEvent = (event: OperationalEvent) => {
     setSelectedEvent(event)
     mapRef.current?.flyTo({ center: [event.lng, event.lat], zoom: 11, duration: 700 })
@@ -474,6 +481,13 @@ export default function LiveMap() {
   const layerCount = (id: string) => {
     return scopeEvents.filter(event => event.type === id).length
   }
+
+  const closureCount = visibleEvents.filter(event => event.type === 'closures').length
+  const roadworkCount = visibleEvents.filter(event => event.type === 'roadworks').length
+  const warningCount = visibleEvents.filter(event => event.type === 'warnings').length
+  const soleActiveLayer = activeLayers.filter(id => id !== 'traffic').length === 1
+    ? activeLayers.find(id => id !== 'traffic') || ''
+    : ''
 
   return (
     <div className="live-map-page">
@@ -530,10 +544,40 @@ export default function LiveMap() {
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search road or place…" />
             {query && <button type="button" onClick={() => setQuery('')}><XCircle size={13} /></button>}
           </div>
-          <div className="live-event-summary">
-            <div><strong>{visibleEvents.length}</strong><span>Matched</span></div>
-            <div><strong>{visibleEvents.filter(event => event.type === 'warnings').length}</strong><span>Safety</span></div>
-            <div><strong>{roadVectors.length}</strong><span>Autobahns</span></div>
+          <div className="live-event-summary" data-testid="corridor-event-summary" role="group" aria-label="Live Autobahn signal counts">
+            <button
+              type="button"
+              className={soleActiveLayer === 'closures' ? 'active' : ''}
+              title="Live Autobahn closures in the current scope, layers, and search. Click to show closures only."
+              aria-pressed={soleActiveLayer === 'closures'}
+              onClick={() => filterToLayer('closures')}
+              data-testid="corridor-count-closures"
+            >
+              <strong>{closureCount}</strong>
+              <span>Closures</span>
+            </button>
+            <button
+              type="button"
+              className={soleActiveLayer === 'roadworks' ? 'active' : ''}
+              title="Live Autobahn roadworks in the current scope, layers, and search. Click to show roadworks only."
+              aria-pressed={soleActiveLayer === 'roadworks'}
+              onClick={() => filterToLayer('roadworks')}
+              data-testid="corridor-count-roadworks"
+            >
+              <strong>{roadworkCount}</strong>
+              <span>Roadworks</span>
+            </button>
+            <button
+              type="button"
+              className={soleActiveLayer === 'warnings' ? 'active' : ''}
+              title="Live Autobahn warnings / safety signals in the current scope, layers, and search. Click to show warnings only."
+              aria-pressed={soleActiveLayer === 'warnings'}
+              onClick={() => filterToLayer('warnings')}
+              data-testid="corridor-count-warnings"
+            >
+              <strong>{warningCount}</strong>
+              <span>Warnings</span>
+            </button>
           </div>
           {selectedEvent && (
             <div className="selected-map-evidence">
@@ -598,9 +642,15 @@ export default function LiveMap() {
             </section>
 
             <div className="live-map-kpis" data-testid="corridor-map-kpis">
-              <div><Route size={14} /><span>Operational signals</span><strong>{visibleEvents.length}</strong></div>
-              <div><AlertTriangle size={14} /><span>Warnings</span><strong>{visibleEvents.filter(event => event.type === 'warnings').length}</strong></div>
-              <div><RefreshCw size={14} /><span>Autobahns in view</span><strong>{roadVectors.length}</strong></div>
+              <div title="Live Autobahn closures matching current filters">
+                <XCircle size={14} /><span>Closures</span><strong>{closureCount}</strong>
+              </div>
+              <div title="Live Autobahn roadworks matching current filters">
+                <Construction size={14} /><span>Roadworks</span><strong>{roadworkCount}</strong>
+              </div>
+              <div title="Live Autobahn warnings matching current filters">
+                <AlertTriangle size={14} /><span>Warnings</span><strong>{warningCount}</strong>
+              </div>
             </div>
           </div>
 
