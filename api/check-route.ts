@@ -757,19 +757,22 @@ export default async function handler(
     }
 
     // OSM bridge/clearance: conflicts HOLD; unknowns/partial stay VERIFY; Overpass
-    // failure falls back to the classic "not available" VERIFY card.
+    // failure falls back to the classic "not available" VERIFY card (with error detail).
+    const osmError = 'error' in osmResult && typeof osmResult.error === 'string' ? osmResult.error : null
     const osmEvidence = osmResult.evidence?.length
       ? osmResult.evidence
       : [{
           id: 'bridge-clearance-unknown',
           title: 'Bridge and clearance data not available',
-          detail: 'Unknown clearance cannot yield READY — confirm on site or tick dispatcher confirmation.',
+          detail: osmError
+            ? `OpenStreetMap Overpass lookup failed (${osmError}). Unknown clearance cannot yield READY — confirm on site or tick dispatcher confirmation.`
+            : 'OpenStreetMap Overpass lookup returned no clearance data. Unknown clearance cannot yield READY — confirm on site or tick dispatcher confirmation.',
           source: 'Route check system',
           confidence: 'medium' as const,
           state: 'warning' as const,
           category: 'observations' as const,
           distanceKm: null,
-          reason: 'Clearance not confirmed.',
+          reason: osmError ? `Clearance not confirmed (OSM unavailable: ${osmError}).` : 'Clearance not confirmed (OSM unavailable).',
           locationKind: 'unknown' as const,
           blocker: true,
           retrievedAt,

@@ -58,6 +58,11 @@ import {
 } from '../lib/siteAcknowledgements'
 import { displayEvidenceTitle, evidenceOriginalGerman, looksGerman, looksTechnical, splitConcatenatedPlaces } from '../lib/evidenceSummary'
 import { GPX_FRIENDLY_TOO_LARGE, GpxParseError, parseGpxDocument, serializeGpxTrack, validateGpxFileSize } from '../lib/gpxParse'
+import { waitForSyncIdle } from '../lib/browserStore'
+import {
+  dispatchActionLogLine,
+  dispatchActionToast,
+} from '../lib/dispatchActionPersist'
 
 const RouteMapGL = lazy(() => importWithChunkRecovery(() => import('../components/RouteMapGL')))
 
@@ -155,16 +160,24 @@ export default function RouteIntelligencePolished() {
   const vehicleValid = vehicle.width > 0 && vehicle.height > 0 && vehicle.length > 0 && vehicle.grossWeight > 0
   const departureValid = Boolean(plannedDeparture && fromLocalInput(plannedDeparture))
   const confirmerName = clearanceBy.trim()
-  const DEMO_NOT_SENT = 'Logged locally (demo), not sent'
 
-  const logDemoAction = (label: string) => {
-    const line = `${label}: ${DEMO_NOT_SENT}`
-    setToast(DEMO_NOT_SENT)
+  /** Record a dispatch decision on check history; toast only after /api/state confirms (or fails). */
+  const logDemoAction = async (label: string) => {
     const id = lastHistoryId.current
-    if (!id) return
-    const record = history.find(item => item.id === id)
-    const prior = record?.actionsLog || []
-    patchHistory(id, { actionsLog: [...prior, line] })
+    const line = dispatchActionLogLine(label)
+    const prior = (id ? history.find(item => item.id === id)?.actionsLog : undefined) || []
+    if (id) {
+      // Store the action label only — never toast/status text (avoids stale failure lines in Redis).
+      patchHistory(id, { actionsLog: [...prior, line] }, { immediate: true })
+    }
+    const ok = await waitForSyncIdle()
+    setToast(dispatchActionToast(ok ? 'synced' : 'failed'))
+  }
+
+  const confirmAccountSave = async (successMessage: string) => {
+    const ok = await waitForSyncIdle()
+    setToast(ok ? successMessage : "Couldn't save to your account")
+    return ok
   }
 
   const applyPermitClearance = (permit?: TestPermit | null, metadata?: any) => {
@@ -739,7 +752,7 @@ export default function RouteIntelligencePolished() {
     void runCheck(gpxContent, meta, permit, acknowledgements)
   }
 
-  const handleSaveJob = () => {
+  const handleSaveJob = async () => {
     if (!gpxContent) return
     const name = jobName.trim() || defaultJobName(routeFile, result?.route.origin, result?.route.destination, permitNumber)
     const meta = lastPermitMeta.current
@@ -779,7 +792,7 @@ export default function RouteIntelligencePolished() {
     rememberPermitMeta(null, jobCheckOptions(saved))
     setShowSaveJob(false)
     setMonitoring(true)
-    setToast('Job saved and monitoring started.')
+    await confirmAccountSave('Job saved and monitoring started.')
   }
 
   const displayed = result
@@ -808,7 +821,7 @@ export default function RouteIntelligencePolished() {
         impact: overlaid.impact,
         evidence: overlaid.evidence,
         siteAcknowledgements: acks,
-      })
+      }, { immediate: true })
     }
     if (loadedJob.current) {
       updateJob(loadedJob.current, {
@@ -823,7 +836,7 @@ export default function RouteIntelligencePolished() {
     return overlaid
   }
 
-  const setResultClearance = (next: boolean) => {
+  const setResultClearance = async (next: boolean) => {
     const by = clearanceByRef.current.trim() || clearanceBy.trim() || 'Dispatcher'
     const at = next ? (confirmedAtRef.current || confirmedAt || new Date().toISOString()) : (confirmedAtRef.current || confirmedAt)
     clearanceConfirmedRef.current = next
@@ -839,6 +852,7 @@ export default function RouteIntelligencePolished() {
     }
     setClearanceConfirmed(next)
     persistOverlay(acknowledgements, next, by, at)
+    await confirmAccountSave(next ? 'Clearance tick saved to your account.' : 'Clearance tick cleared.')
   }
 
   const openBulkConfirm = (ids: string[]) => {
@@ -862,7 +876,7 @@ export default function RouteIntelligencePolished() {
     setShowOnSiteConfirm(true)
   }
 
-  const confirmOnSite = (ids: string[], confirmedBy?: string) => {
+  const confirmOnSite = async (ids: string[], confirmedBy?: string) => {
     if (!result) return
     const name = (confirmedBy || clearanceByRef.current || clearanceBy).trim()
     if (!name) {
@@ -896,7 +910,11 @@ export default function RouteIntelligencePolished() {
       ? (confirmedAtRef.current || new Date().toISOString())
       : confirmedAtRef.current
     const overlaid = persistOverlay(next, clearance, name, confirmed)
-    setToast(overlaid?.verdict === 'READY' ? overlaid.title : `Confirmed ${added} item${added === 1 ? '' : 's'} on site`)
+    await confirmAccountSave(
+      overlaid?.verdict === 'READY'
+        ? overlaid.title
+        : `Confirmed ${added} item${added === 1 ? '' : 's'} on site`,
+    )
   }
 
   const exportCurrent = (format: 'pdf' | 'csv') => {
@@ -1659,18 +1677,17 @@ export default function RouteIntelligencePolished() {
               const item = result.evidence.find(entry => entry.id === id)
               return item && isHoldItem(item)
             })
-            if (holdLocked) {
-              setToast('Confirmed closed — HOLD remains.')
-            } else {
-              setToast(`Status recorded as closed${note ? ': ' + note : ''}`)
-            }
+            const closedLabel = holdLocked
+              ? 'Confirmed closed — HOLD remains'
+              : `Status recorded as closed${note ? `: ${note}` : ''}`
+            void logDemoAction(closedLabel)
             setShowOnSiteConfirm(false)
             setPendingConfirmIds([])
             setConfirmLocation(undefined)
             return
           }
 
-          confirmOnSite(pendingConfirmIds, name)
+          void confirmOnSite(pendingConfirmIds, name)
           setShowOnSiteConfirm(false)
           setPendingConfirmIds([])
           setConfirmLocation(undefined)

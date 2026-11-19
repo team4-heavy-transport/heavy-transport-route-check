@@ -35,11 +35,11 @@ export default function HoldDepartureDialog({ open, onClose, onConfirm, routeNam
     <div className="dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title">
       <div ref={dialogRef} className="dialog-content">
         <header>
-          <h2 id="hold-dialog-title">Log a departure hold (demo)?</h2>
+          <h2 id="hold-dialog-title">Log a departure hold?</h2>
           <p>
-            This demo only marks{' '}
-            {routeName ? `the ${routeName} route` : 'the route'} as held in your account. The dispatch team is not
-            notified — nothing is sent.
+            This saves a hold decision for{' '}
+            {routeName ? `the ${routeName} route` : 'the route'} to your account history. No external
+            notification is sent to the dispatch team, driver, or authority.
           </p>
         </header>
         <div className="dialog-actions">

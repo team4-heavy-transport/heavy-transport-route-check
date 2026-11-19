@@ -1025,7 +1025,18 @@ async function main() {
   if (await safetyLayer.count()) {
     if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click()
     await page.waitForTimeout(300)
-    const safetyOn = await readCorridorKpis()
+    let safetyOn = await readCorridorKpis()
+    let safetyScope = 'Bavaria'
+    // Live Bavaria can temporarily have zero safety/warning signals; use Germany so the
+    // layer-off assertion still proves Warnings track the Safety layer.
+    if (!(safetyOn.safety > 0)) {
+      await page.getByRole('tab', { name: 'Germany' }).click()
+      await page.waitForTimeout(500)
+      if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click()
+      await page.waitForTimeout(300)
+      safetyOn = await readCorridorKpis()
+      safetyScope = 'Germany'
+    }
     await safetyLayer.click()
     await page.waitForTimeout(400)
     const safetyOff = await readCorridorKpis()
@@ -1037,7 +1048,7 @@ async function main() {
         && safetyOff.warnings === 0
         && safetyOff.safety === 0
         && safetyOff.matched < safetyOn.matched,
-      JSON.stringify({ safetyOn, safetyOff }),
+      JSON.stringify({ safetyScope, safetyOn, safetyOff }),
     )
     // Restore Safety layer for later layout checks.
     if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click().catch(() => {})
@@ -1166,7 +1177,8 @@ async function main() {
     const escalateToast = await page.locator('.app-toast').innerText().catch(() => '')
     record(
       'Item 4: escalate toast does not claim sent',
-      /Logged locally \(demo\), not sent/i.test(escalateToast),
+      /Decision saved – no external notification sent/i.test(escalateToast)
+        || /Couldn't save to your account/i.test(escalateToast),
       escalateToast.slice(0, 160),
     )
   } else {
@@ -1774,32 +1786,75 @@ async function main() {
   await page.getByRole('button', { name: /Take action/i }).first().click()
   await page.getByRole('button', { name: /^Escalate$/i }).click()
   await page.getByRole('button', { name: /Confirm escalation/i }).click()
-  await page.getByText(/Logged locally \(demo\), not sent/i).waitFor({ timeout: 10000 })
+  const decisionToastRe = /Decision saved – no external notification sent|Couldn't save to your account/i
+  await page.getByText(decisionToastRe).waitFor({ timeout: 10000 })
   const holdEscalateToast = await page.locator('body').innerText()
   record(
-    'Item 4: HOLD escalate uses honest local-log wording',
-    /Logged locally \(demo\), not sent/i.test(holdEscalateToast)
-      && !/Escalation sent to transport manager/i.test(holdEscalateToast),
+    'Item 4: HOLD escalate uses honest saved-decision wording',
+    decisionToastRe.test(holdEscalateToast)
+      && !/Escalation sent to transport manager/i.test(holdEscalateToast)
+      && !/Logged locally \(demo\), not sent/i.test(holdEscalateToast)
+      && !/Saved locally only/i.test(holdEscalateToast),
     holdEscalateToast.replace(/\s+/g, ' ').slice(0, 220),
   )
   await page.getByRole('button', { name: /Take action/i }).first().click()
   await page.getByRole('button', { name: /Hold departure/i }).click()
   await page.getByRole('button', { name: /Confirm hold/i }).click()
-  await page.getByText(/Logged locally \(demo\), not sent/i).waitFor({ timeout: 10000 })
+  await page.getByText(decisionToastRe).waitFor({ timeout: 10000 })
   record('Item 4: hold-departure toast does not claim notify/sent', true)
   await page.getByRole('button', { name: /Take action/i }).first().click()
   await page.getByRole('button', { name: /Request on-site check/i }).click()
   await page.getByRole('button', { name: /Log check request/i }).click()
-  await page.getByText(/Logged locally \(demo\), not sent/i).waitFor({ timeout: 10000 })
+  await page.getByText(decisionToastRe).waitFor({ timeout: 10000 })
   record('Item 4: on-site check toast does not claim requested/sent', true)
+
+  await flushAccount(page)
+  const demoActionsState = await page.evaluate(async () => {
+    const user = window.__HT_TEST__?.getUserId?.() || 'demo'
+    const res = await fetch(`/api/state?user=${encodeURIComponent(user)}`)
+    const payload = await res.json()
+    const raw = payload?.data?.['htr-route-check-history']
+    const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || [])
+    const logs = Array.isArray(parsed)
+      ? parsed.flatMap(row => Array.isArray(row?.actionsLog) ? row.actionsLog : [])
+      : []
+    return { count: Array.isArray(parsed) ? parsed.length : -1, logs: logs.slice(0, 8), backend: payload?.backend || null }
+  })
+  record(
+    'Item 4: dispatch actions are present in GET /api/state history',
+    demoActionsState.logs.some(line => /Escalate|Hold departure|On-site check/i.test(String(line))),
+    JSON.stringify(demoActionsState).slice(0, 280),
+  )
 
   await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
   const historyActions = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
   record(
     'Item 4: demo actions appear in check history',
-    /Logged locally \(demo\), not sent/i.test(historyActions),
+    /Escalate|Hold departure|On-site check/i.test(historyActions)
+      && !/Couldn't save to your account|Decision saved|Logged locally/i.test(historyActions),
     historyActions.slice(0, 220),
   )
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+  const historyActionsReload = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
+  record(
+    'Item 4: dispatch actions survive reload in Alerts & history',
+    /Escalate|Hold departure|On-site check/i.test(historyActionsReload)
+      && !/Couldn't save to your account|Logged locally/i.test(historyActionsReload),
+    historyActionsReload.slice(0, 220),
+  )
+
+  // READY proceed CTA: same honest toast + account persistence path.
+  await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('button', { name: /show sample permits/i }).click()
+  await page.getByRole('button', { name: /Simulated READY — empty A20 corridor/i }).click()
+  await fillPlannedDeparture(page)
+  await page.getByRole('button', { name: 'Check route' }).click()
+  await page.locator('.verdict-banner').waitFor({ timeout: 30000 })
+  await page.getByRole('button', { name: /Proceed with departure/i }).first().click()
+  await page.getByText(decisionToastRe).waitFor({ timeout: 10000 })
+  record('Item 4: READY proceed toast is honest about save vs notify', true)
+  await flushAccount(page)
 
   // Sample ?run=1: labelled demo departure + permit vehicle dims (not Standard 3.0×4.0×25×52).
   const bremenPayloadPromise = page.waitForRequest(
