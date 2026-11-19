@@ -898,31 +898,46 @@ async function main() {
     JSON.stringify({ parkingInBavaria, roads: parkingRoads }),
   )
 
-  // Map KPI strip must track the same filtered set as the list/map (scope + layers),
-  // not the raw national feed total.
+  // Map KPI strip must track the same filtered Closures/Roadworks/Warnings counts
+  // as the actionable summary buttons (scope + layers + search).
   await page.locator('[data-testid="corridor-map-kpis"]').waitFor({ timeout: 20000 })
   await page.getByRole('tab', { name: 'Bavaria' }).click()
   await page.waitForTimeout(800)
-  const bavariaKpis = await page.evaluate(() => {
-    const summaryStrong = [...document.querySelectorAll('.live-event-summary > div')].map(el => ({
+  const readCorridorTypeCounts = async () => page.evaluate(() => {
+    const summaryStrong = [...document.querySelectorAll('.live-event-summary > button, .live-event-summary > div')].map(el => ({
       label: el.querySelector('span')?.textContent?.trim() || '',
       value: Number(el.querySelector('strong')?.textContent || 'NaN'),
     }))
-    const matched = summaryStrong.find(item => /Matched/i.test(item.label))?.value ?? NaN
-    const safety = summaryStrong.find(item => /Safety/i.test(item.label))?.value ?? NaN
     const kpiStrong = [...document.querySelectorAll('[data-testid="corridor-map-kpis"] > div')].map(el => ({
       label: el.querySelector('span')?.textContent?.trim() || '',
       value: Number(el.querySelector('strong')?.textContent || 'NaN'),
     }))
-    const ops = kpiStrong.find(item => /Operational signals/i.test(item.label))?.value ?? NaN
-    const warnings = kpiStrong.find(item => /Warnings/i.test(item.label))?.value ?? NaN
-    return { matched, ops, warnings, safety, summaryStrong, kpiStrong }
+    const pick = (rows, re) => rows.find(item => re.test(item.label))?.value ?? NaN
+    const closures = pick(summaryStrong, /Closures/i)
+    const roadworks = pick(summaryStrong, /Roadworks/i)
+    const warnings = pick(summaryStrong, /Warnings/i)
+    const kpiClosures = pick(kpiStrong, /Closures/i)
+    const kpiRoadworks = pick(kpiStrong, /Roadworks/i)
+    const kpiWarnings = pick(kpiStrong, /Warnings/i)
+    const matchedText = document.querySelector('.live-event-list-heading b')?.textContent || ''
+    const matched = Number((matchedText.match(/(\d+)/) || [])[1] || 'NaN')
+    return {
+      closures, roadworks, warnings,
+      kpiClosures, kpiRoadworks, kpiWarnings,
+      matched,
+      typedTotal: [closures, roadworks, warnings].every(Number.isFinite)
+        ? closures + roadworks + warnings
+        : NaN,
+      summaryStrong, kpiStrong,
+    }
   })
+  const bavariaKpis = await readCorridorTypeCounts()
   record(
     'Corridor KPIs match Bavaria-scoped visible signals',
     Number.isFinite(bavariaKpis.matched)
-      && bavariaKpis.ops === bavariaKpis.matched
-      && bavariaKpis.warnings === bavariaKpis.safety
+      && bavariaKpis.closures === bavariaKpis.kpiClosures
+      && bavariaKpis.roadworks === bavariaKpis.kpiRoadworks
+      && bavariaKpis.warnings === bavariaKpis.kpiWarnings
       && bavariaKpis.matched > 0
       && bavariaKpis.matched < 500,
     JSON.stringify(bavariaKpis),
@@ -932,54 +947,31 @@ async function main() {
   const lorry = page.getByRole('button', { name: /Lorry parking/i })
   if (await lorry.count()) {
     const before = await page.evaluate(() => ({
-      matched: Number(document.querySelector('.live-event-summary strong')?.textContent || 'NaN'),
-      ops: Number(document.querySelector('[data-testid="corridor-map-kpis"] div:first-child strong')?.textContent || 'NaN'),
-      lorryOn: document.querySelector('button[aria-pressed="true"]')
-        ? [...document.querySelectorAll('.live-layer-panel button[aria-pressed]')].some(b => /Lorry parking/i.test(b.textContent || '') && b.getAttribute('aria-pressed') === 'true')
-        : false,
+      matched: Number(((document.querySelector('.live-event-list-heading b')?.textContent || '').match(/(\d+)/) || [])[1] || 'NaN'),
+      lorryOn: [...document.querySelectorAll('.live-layer-panel button[aria-pressed]')].some(b => /Lorry parking/i.test(b.textContent || '') && b.getAttribute('aria-pressed') === 'true'),
     }))
     // Ensure lorry starts off (default), then toggle on and off.
     if (before.lorryOn) await lorry.click()
     await page.waitForTimeout(400)
-    const lorryOff = await page.evaluate(() => ({
-      matched: Number(document.querySelector('.live-event-summary strong')?.textContent || 'NaN'),
-      ops: Number(document.querySelector('[data-testid="corridor-map-kpis"] div:first-child strong')?.textContent || 'NaN'),
-    }))
+    const lorryOff = await readCorridorTypeCounts()
     await lorry.click()
     await page.waitForTimeout(400)
-    const lorryOn = await page.evaluate(() => ({
-      matched: Number(document.querySelector('.live-event-summary strong')?.textContent || 'NaN'),
-      ops: Number(document.querySelector('[data-testid="corridor-map-kpis"] div:first-child strong')?.textContent || 'NaN'),
-    }))
+    const lorryOn = await readCorridorTypeCounts()
     record(
       'Corridor KPIs follow layer toggles (lorry parking)',
-      lorryOff.ops === lorryOff.matched
-        && lorryOn.ops === lorryOn.matched
-        && lorryOn.ops > lorryOff.ops,
+      lorryOff.closures === lorryOff.kpiClosures
+        && lorryOn.closures === lorryOn.kpiClosures
+        && lorryOn.matched > lorryOff.matched,
       JSON.stringify({ lorryOff, lorryOn }),
     )
-    if (lorryOn.ops !== lorryOff.ops) await lorry.click().catch(() => {})
+    if (lorryOn.matched !== lorryOff.matched) await lorry.click().catch(() => {})
   } else {
     record('Corridor KPIs follow layer toggles (lorry parking)', false, 'Lorry parking layer control missing')
   }
 
-  // Panel Safety must track the same filtered set as overlay Warnings
+  // Panel Warnings must track the same filtered set as overlay Warnings
   // (search query + Safety signals layer), not the raw scope total.
-  const readCorridorKpis = async () => page.evaluate(() => {
-    const summaryStrong = [...document.querySelectorAll('.live-event-summary > div')].map(el => ({
-      label: el.querySelector('span')?.textContent?.trim() || '',
-      value: Number(el.querySelector('strong')?.textContent || 'NaN'),
-    }))
-    const matched = summaryStrong.find(item => /Matched/i.test(item.label))?.value ?? NaN
-    const safety = summaryStrong.find(item => /Safety/i.test(item.label))?.value ?? NaN
-    const kpiStrong = [...document.querySelectorAll('[data-testid="corridor-map-kpis"] > div')].map(el => ({
-      label: el.querySelector('span')?.textContent?.trim() || '',
-      value: Number(el.querySelector('strong')?.textContent || 'NaN'),
-    }))
-    const ops = kpiStrong.find(item => /Operational signals/i.test(item.label))?.value ?? NaN
-    const warnings = kpiStrong.find(item => /Warnings/i.test(item.label))?.value ?? NaN
-    return { matched, ops, warnings, safety }
-  })
+  const readCorridorKpis = readCorridorTypeCounts
 
   const germanyBaseline = await readCorridorKpis()
   const searchInput = page.locator('.live-event-search input')
@@ -989,11 +981,11 @@ async function main() {
   record(
     'Corridor Safety/Warnings agree under road search',
     Number.isFinite(searchA9.matched)
-      && searchA9.ops === searchA9.matched
-      && searchA9.warnings === searchA9.safety
+      && searchA9.warnings === searchA9.kpiWarnings
+      && searchA9.closures === searchA9.kpiClosures
       && searchA9.matched > 0
       && searchA9.matched < germanyBaseline.matched
-      && searchA9.safety <= germanyBaseline.safety,
+      && searchA9.warnings <= germanyBaseline.warnings,
     JSON.stringify({ germanyBaseline, searchA9 }),
   )
 
@@ -1004,9 +996,10 @@ async function main() {
   record(
     'Corridor Safety clears when search matches nothing',
     searchMiss.matched === 0
-      && searchMiss.ops === 0
       && searchMiss.warnings === 0
-      && searchMiss.safety === 0
+      && searchMiss.kpiWarnings === 0
+      && searchMiss.closures === 0
+      && searchMiss.roadworks === 0
       && emptyList > 0,
     JSON.stringify({ searchMiss, emptyList }),
   )
@@ -1029,7 +1022,7 @@ async function main() {
     let safetyScope = 'Bavaria'
     // Live Bavaria can temporarily have zero safety/warning signals; use Germany so the
     // layer-off assertion still proves Warnings track the Safety layer.
-    if (!(safetyOn.safety > 0)) {
+    if (!(safetyOn.warnings > 0)) {
       await page.getByRole('tab', { name: 'Germany' }).click()
       await page.waitForTimeout(500)
       if (await safetyLayer.getAttribute('aria-pressed') !== 'true') await safetyLayer.click()
@@ -1042,11 +1035,10 @@ async function main() {
     const safetyOff = await readCorridorKpis()
     record(
       'Corridor Safety/Warnings agree with Safety layer off',
-      safetyOn.warnings === safetyOn.safety
-        && safetyOn.safety > 0
-        && safetyOff.ops === safetyOff.matched
+      safetyOn.warnings === safetyOn.kpiWarnings
+        && safetyOn.warnings > 0
         && safetyOff.warnings === 0
-        && safetyOff.safety === 0
+        && safetyOff.kpiWarnings === 0
         && safetyOff.matched < safetyOn.matched,
       JSON.stringify({ safetyScope, safetyOn, safetyOff }),
     )
@@ -1690,12 +1682,19 @@ async function main() {
     await page.setViewportSize({ width, height })
     await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
     await skipIfNeeded()
-    await page.locator('.route-alert-item').first().waitFor({ timeout: 15000 })
+    await page.locator('[data-testid="route-alert-group"], .route-alert-group').first().waitFor({ timeout: 15000 })
+    // Groups start collapsed — expand so nested rows and Escalated badges are in the DOM.
+    const groupToggle = page.locator('[data-testid="alerts-by-route"] .route-alert-group .route-alert-main').first()
+    if (await groupToggle.count()) {
+      const expanded = await groupToggle.getAttribute('aria-expanded')
+      if (expanded !== 'true') await groupToggle.click()
+    }
+    await page.locator('.route-alert-item, .route-alert-group-header').first().waitFor({ timeout: 15000 })
     const layout = await page.evaluate(() => {
-      const item = document.querySelector('.route-alert-item')
-      const main = document.querySelector('.route-alert-main')
-      const chevron = document.querySelector('.route-alert-chevron')
-      const badges = [...document.querySelectorAll('.route-alert-item .alert-status')]
+      const item = document.querySelector('.route-alert-item') || document.querySelector('.route-alert-group-header')
+      const main = item?.querySelector('.route-alert-main') || document.querySelector('.route-alert-main')
+      const chevron = item?.querySelector('.route-alert-chevron') || document.querySelector('.route-alert-chevron')
+      const badges = [...document.querySelectorAll('.route-alert-group .alert-status, .route-alert-item .alert-status')]
       const truncated = badges.filter(el => el.scrollWidth > el.clientWidth + 1 || el.textContent.trim().length <= 1)
       const chevronInRow = Boolean(item && chevron && Math.abs(chevron.getBoundingClientRect().top - item.getBoundingClientRect().top) < item.getBoundingClientRect().height)
       return {
@@ -1718,6 +1717,12 @@ async function main() {
     )
   }
   await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+  await skipIfNeeded()
+  const historyToggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
+  await historyToggle.waitFor({ timeout: 15000 })
+  if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') await historyToggle.click()
+  await page.locator('.check-history-log .route-alert-item').first().waitFor({ timeout: 15000 })
   const historyPdf = await downloadFile(page, 'PDF')
   record('History PDF download is non-empty', historyPdf.size > 200, `${historyPdf.suggested} ${historyPdf.size} bytes`)
   const historyCsv = await downloadFile(page, 'CSV')
@@ -1827,6 +1832,14 @@ async function main() {
   )
 
   await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+  const expandHistoryForActions = async () => {
+    const toggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
+    await toggle.waitFor({ timeout: 15000 })
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+    await page.locator('[data-testid="history-actions-log"]').first().waitFor({ timeout: 15000 })
+  }
+  await expandHistoryForActions()
   const historyActions = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
   record(
     'Item 4: demo actions appear in check history',
@@ -1836,6 +1849,7 @@ async function main() {
   )
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+  await expandHistoryForActions()
   const historyActionsReload = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
   record(
     'Item 4: dispatch actions survive reload in Alerts & history',
@@ -2593,7 +2607,13 @@ async function main() {
 
   await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
   await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
-  const activityChecks = await page.locator('.check-history-log .route-alert-item').count()
+  const historyGroups = page.locator('[data-testid="check-history-by-route"] .route-alert-group')
+  await historyGroups.first().waitFor({ timeout: 15000 }).catch(() => {})
+  if (await historyGroups.count()) {
+    const toggle = historyGroups.first().locator('.route-alert-main').first()
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  }
+  const activityChecks = await page.locator('.check-history-log .route-alert-item, .check-history-log .route-alert-group').count()
   const activityEmpty = await page.getByRole('heading', { name: /No checks yet|No checks in this browser/i }).count()
   record(
     'Alerts & history shows ≥1 check after reload for Ana',
