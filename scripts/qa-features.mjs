@@ -1682,12 +1682,19 @@ async function main() {
     await page.setViewportSize({ width, height })
     await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
     await skipIfNeeded()
-    await page.locator('.route-alert-item').first().waitFor({ timeout: 15000 })
+    await page.locator('[data-testid="route-alert-group"], .route-alert-group').first().waitFor({ timeout: 15000 })
+    // Groups start collapsed — expand so nested rows and Escalated badges are in the DOM.
+    const groupToggle = page.locator('[data-testid="alerts-by-route"] .route-alert-group .route-alert-main').first()
+    if (await groupToggle.count()) {
+      const expanded = await groupToggle.getAttribute('aria-expanded')
+      if (expanded !== 'true') await groupToggle.click()
+    }
+    await page.locator('.route-alert-item, .route-alert-group-header').first().waitFor({ timeout: 15000 })
     const layout = await page.evaluate(() => {
-      const item = document.querySelector('.route-alert-item')
-      const main = document.querySelector('.route-alert-main')
-      const chevron = document.querySelector('.route-alert-chevron')
-      const badges = [...document.querySelectorAll('.route-alert-item .alert-status')]
+      const item = document.querySelector('.route-alert-item') || document.querySelector('.route-alert-group-header')
+      const main = item?.querySelector('.route-alert-main') || document.querySelector('.route-alert-main')
+      const chevron = item?.querySelector('.route-alert-chevron') || document.querySelector('.route-alert-chevron')
+      const badges = [...document.querySelectorAll('.route-alert-group .alert-status, .route-alert-item .alert-status')]
       const truncated = badges.filter(el => el.scrollWidth > el.clientWidth + 1 || el.textContent.trim().length <= 1)
       const chevronInRow = Boolean(item && chevron && Math.abs(chevron.getBoundingClientRect().top - item.getBoundingClientRect().top) < item.getBoundingClientRect().height)
       return {
@@ -1710,6 +1717,12 @@ async function main() {
     )
   }
   await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+  await skipIfNeeded()
+  const historyToggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
+  await historyToggle.waitFor({ timeout: 15000 })
+  if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') await historyToggle.click()
+  await page.locator('.check-history-log .route-alert-item').first().waitFor({ timeout: 15000 })
   const historyPdf = await downloadFile(page, 'PDF')
   record('History PDF download is non-empty', historyPdf.size > 200, `${historyPdf.suggested} ${historyPdf.size} bytes`)
   const historyCsv = await downloadFile(page, 'CSV')
@@ -1819,6 +1832,14 @@ async function main() {
   )
 
   await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+  await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+  const expandHistoryForActions = async () => {
+    const toggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
+    await toggle.waitFor({ timeout: 15000 })
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+    await page.locator('[data-testid="history-actions-log"]').first().waitFor({ timeout: 15000 })
+  }
+  await expandHistoryForActions()
   const historyActions = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
   record(
     'Item 4: demo actions appear in check history',
@@ -1828,6 +1849,7 @@ async function main() {
   )
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+  await expandHistoryForActions()
   const historyActionsReload = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
   record(
     'Item 4: dispatch actions survive reload in Alerts & history',
@@ -2585,7 +2607,13 @@ async function main() {
 
   await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
   await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
-  const activityChecks = await page.locator('.check-history-log .route-alert-item').count()
+  const historyGroups = page.locator('[data-testid="check-history-by-route"] .route-alert-group')
+  await historyGroups.first().waitFor({ timeout: 15000 }).catch(() => {})
+  if (await historyGroups.count()) {
+    const toggle = historyGroups.first().locator('.route-alert-main').first()
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  }
+  const activityChecks = await page.locator('.check-history-log .route-alert-item, .check-history-log .route-alert-group').count()
   const activityEmpty = await page.getByRole('heading', { name: /No checks yet|No checks in this browser/i }).count()
   record(
     'Alerts & history shows ≥1 check after reload for Ana',
