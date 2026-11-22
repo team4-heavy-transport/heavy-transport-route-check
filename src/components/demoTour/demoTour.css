@@ -95,6 +95,39 @@
   padding: 12px 14px 10px;
 }
 
+/* One-line fallback when neither full edge clears the spotlight. */
+.demo-tour-tooltip.is-sheet-compact {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  max-height: none;
+  overflow: hidden;
+  padding: 8px 10px;
+}
+
+.demo-tour-tooltip.is-sheet-compact .demo-tour-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.demo-tour-tooltip.is-sheet-compact .demo-tour-actions {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.demo-tour-tooltip.is-sheet-compact .demo-tour-actions-spacer,
+.demo-tour-tooltip.is-sheet-compact .demo-tour-btn:not(.is-primary) {
+  display: none;
+}
+
 .demo-tour-tooltip.is-yielding {
   z-index: var(--demo-tour-z-tooltip);
   max-width: min(320px, calc(100vw - 24px));
@@ -106,6 +139,12 @@
 .demo-tour-tooltip.is-sheet-top .demo-tour-title {
   font-size: 18px;
   margin-bottom: 4px;
+}
+
+.demo-tour-tooltip.is-sheet.is-sheet-compact .demo-tour-title,
+.demo-tour-tooltip.is-sheet-top.is-sheet-compact .demo-tour-title {
+  font-size: 15px;
+  margin-bottom: 0;
 }
 
 .demo-tour-tooltip.is-sheet .demo-tour-body,

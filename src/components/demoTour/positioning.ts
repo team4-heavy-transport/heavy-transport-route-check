@@ -1,11 +1,29 @@
 export type Rect = { top: number; left: number; width: number; height: number }
 
-export type TooltipPlacement = 'below' | 'above' | 'left' | 'right' | 'corner' | 'center' | 'sheet' | 'sheet-top'
+export type TooltipPlacement =
+  | 'below'
+  | 'above'
+  | 'left'
+  | 'right'
+  | 'corner'
+  | 'center'
+  | 'sheet'
+  | 'sheet-top'
+  | 'sheet-compact'
+  | 'sheet-compact-top'
+
+export type MobileSheetPlacement = 'sheet' | 'sheet-top' | 'sheet-compact' | 'sheet-compact-top'
 
 const PAD = 10
 const GAP = 10
 const SPOT_PAD = 6
 const HEADER_H = 56
+/** Mobile tab bar clearance under the bottom sheet (matches `.is-sheet` CSS). */
+const TAB_BAR_H = 56
+/** Gap below the header for a top sheet (matches `.is-sheet-top` CSS). */
+const SHEET_TOP_GAP = 8
+/** One-line compact sheet (title + Next), including padding. */
+export const COMPACT_SHEET_H = 64
 /** Target taller than this fraction of the viewport is truncated for the spotlight. */
 export const TALL_VIEWPORT_RATIO = 0.6
 /** Spotlight shows at most this fraction of the viewport height for tall targets. */
@@ -78,6 +96,83 @@ function fitsHorizontally(left: number, width: number, viewportW: number): boole
   return left >= PAD && left + width + PAD <= viewportW
 }
 
+/** Axis-aligned rectangle intersection (edges touching count as no overlap). */
+export function rectsIntersect(a: Rect, b: Rect): boolean {
+  return !(
+    a.left + a.width <= b.left ||
+    b.left + b.width <= a.left ||
+    a.top + a.height <= b.top ||
+    b.top + b.height <= a.top
+  )
+}
+
+function sheetRectAtBottom(
+  viewport: { width: number; height: number },
+  sheetHeight: number,
+  tabBarHeight = TAB_BAR_H,
+): Rect {
+  return {
+    top: viewport.height - tabBarHeight - sheetHeight,
+    left: 0,
+    width: viewport.width,
+    height: sheetHeight,
+  }
+}
+
+function sheetRectAtTop(
+  viewport: { width: number; height: number },
+  sheetHeight: number,
+  headerBottom = HEADER_H,
+  gap = SHEET_TOP_GAP,
+): Rect {
+  return {
+    top: headerBottom + gap,
+    left: 0,
+    width: viewport.width,
+    height: sheetHeight,
+  }
+}
+
+/**
+ * After scroll/remeasure: pick bottom sheet, top sheet, or a compact one-line
+ * variant so the tip does not cover the spotlight target.
+ */
+export function decideMobileSheetPlacement(
+  target: Rect,
+  viewport: { width: number; height: number },
+  opts: {
+    sheetHeight: number
+    compactHeight?: number
+    headerBottom?: number
+    tabBarHeight?: number
+  },
+): MobileSheetPlacement {
+  const sheetH = opts.sheetHeight
+  const compactH = opts.compactHeight ?? COMPACT_SHEET_H
+  const headerBottom = opts.headerBottom ?? HEADER_H
+  const tabBarHeight = opts.tabBarHeight ?? TAB_BAR_H
+
+  const bottomFull = sheetRectAtBottom(viewport, sheetH, tabBarHeight)
+  const topFull = sheetRectAtTop(viewport, sheetH, headerBottom)
+
+  if (!rectsIntersect(target, bottomFull)) return 'sheet'
+  if (!rectsIntersect(target, topFull)) return 'sheet-top'
+
+  const bottomCompact = sheetRectAtBottom(viewport, compactH, tabBarHeight)
+  const topCompact = sheetRectAtTop(viewport, compactH, headerBottom)
+
+  if (!rectsIntersect(target, bottomCompact)) return 'sheet-compact'
+  if (!rectsIntersect(target, topCompact)) return 'sheet-compact-top'
+
+  // Tall target still overlaps both compact edges — pick the smaller overlap.
+  const overlap = (sheet: Rect) => {
+    const top = Math.max(target.top, sheet.top)
+    const bottom = Math.min(target.top + target.height, sheet.top + sheet.height)
+    return Math.max(0, bottom - top)
+  }
+  return overlap(bottomCompact) <= overlap(topCompact) ? 'sheet-compact' : 'sheet-compact-top'
+}
+
 /**
  * Place the tip fully inside the viewport (PAD margin). Prefers below → above →
  * right → left; if nothing fits beside the target, pins to a viewport corner.
@@ -86,7 +181,13 @@ export function placeTooltip(
   target: Rect | null,
   tooltip: { width: number; height: number },
   viewport: { width: number; height: number },
-  opts: { sheetHeight?: number; preferSheetTop?: boolean } = {},
+  opts: {
+    sheetHeight?: number
+    /** Stable full-sheet height for collision (avoids compact↔full oscillation). */
+    decisionSheetHeight?: number
+    preferSheetTop?: boolean
+    compactHeight?: number
+  } = {},
 ): { top: number; left: number; placement: TooltipPlacement } {
   const tipW = Math.min(tooltip.width, viewport.width - PAD * 2)
   const tipH = Math.min(tooltip.height, viewport.height - PAD * 2)
@@ -101,11 +202,27 @@ export function placeTooltip(
 
   if (isNarrowViewport(viewport.width)) {
     const sheetH = opts.sheetHeight ?? tipH
-    if (opts.preferSheetTop) {
-      return { top: HEADER_H + PAD, left: PAD, placement: 'sheet-top' }
+    const decisionH =
+      opts.decisionSheetHeight ??
+      Math.max(sheetH, Math.min(280, Math.floor(viewport.height * 0.36)))
+    const placement = opts.preferSheetTop
+      ? ('sheet-top' as MobileSheetPlacement)
+      : decideMobileSheetPlacement(target, viewport, {
+          sheetHeight: decisionH,
+          compactHeight: opts.compactHeight,
+        })
+    if (placement === 'sheet-top' || placement === 'sheet-compact-top') {
+      return { top: HEADER_H + SHEET_TOP_GAP, left: PAD, placement }
+    }
+    if (placement === 'sheet-compact') {
+      return {
+        top: Math.max(PAD, viewport.height - COMPACT_SHEET_H - TAB_BAR_H),
+        left: PAD,
+        placement,
+      }
     }
     return {
-      top: Math.max(PAD, viewport.height - sheetH - 72),
+      top: Math.max(PAD, viewport.height - sheetH - TAB_BAR_H),
       left: PAD,
       placement: 'sheet',
     }

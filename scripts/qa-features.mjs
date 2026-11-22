@@ -902,6 +902,178 @@ async function main() {
   }
   await assertCorridorTourTipOnTop(1440, 900)
   await assertCorridorTourTipOnTop(390, 844)
+
+  // Mobile sheet must not cover the spotlight; hole stays clickable through .demo-tour-root.
+  async function measureTourSpotTipOverlap() {
+    return page.evaluate(() => {
+      const tip = document.querySelector('.demo-tour-tooltip')
+      const spot = document.querySelector('.demo-tour-spotlight')
+      if (!tip) return { ok: false, reason: 'no-tip' }
+      const title = tip.querySelector('.demo-tour-title')?.textContent?.trim() || ''
+      if (!spot) {
+        return { ok: true, skipped: true, title, reason: 'no-spotlight' }
+      }
+      const a = tip.getBoundingClientRect()
+      const b = spot.getBoundingClientRect()
+      const intersects = !(
+        a.right <= b.left
+        || b.right <= a.left
+        || a.bottom <= b.top
+        || b.bottom <= a.top
+      )
+      return {
+        ok: !intersects,
+        title,
+        placement: tip.getAttribute('data-tour-placement') || '',
+        tip: [Math.round(a.left), Math.round(a.top), Math.round(a.width), Math.round(a.height)],
+        spot: [Math.round(b.left), Math.round(b.top), Math.round(b.width), Math.round(b.height)],
+        rootPe: getComputedStyle(document.querySelector('.demo-tour-root')).pointerEvents,
+      }
+    })
+  }
+
+  async function startGuideSection(sectionLabel) {
+    await page.getByRole('button', { name: 'Guide' }).click()
+    const menu = page.getByRole('dialog', { name: 'Guide menu' })
+    await menu.waitFor({ timeout: 10000 })
+    // Menu items append "Not started"/"Done" — scope to the dialog so we never
+    // hit the sidebar wordmark ("Heavy transport route check").
+    await menu.getByRole('button', { name: new RegExp(`^${sectionLabel}\\b`) }).click()
+    await page.locator('.demo-tour-tooltip').waitFor({ state: 'visible', timeout: 20000 })
+  }
+
+  async function advanceTourPrimary() {
+    const tip = page.locator('.demo-tour-tooltip')
+    if (!(await tip.count())) return 'gone'
+    const titleBefore = ((await tip.locator('.demo-tour-title').textContent()) || '').trim()
+    const finish = tip.getByRole('button', { name: 'Finish' })
+    if (await finish.count()) {
+      await finish.click({ timeout: 10000 })
+      return 'finish'
+    }
+    // Prefer Do-it when present so route-check state stays valid for later anchors.
+    const doIt = tip.locator('.demo-tour-btn:not(.is-primary)').filter({ hasNotText: /^Back$/i })
+    if (await doIt.count()) {
+      await doIt.first().click({ timeout: 10000 })
+      await page.waitForFunction(prev => {
+        const el = document.querySelector('.demo-tour-tooltip .demo-tour-title')
+        if (!el) return true
+        return (el.textContent || '').trim() !== prev
+      }, titleBefore, { timeout: 12000 }).catch(() => {})
+      const titleNow = ((await tip.locator('.demo-tour-title').textContent().catch(() => '')) || '').trim()
+      // present/click advances usually move on; if still waiting, Continue once.
+      if (titleNow === titleBefore) {
+        const cont = tip.getByRole('button', { name: /^(Continue|Next)$/ })
+        if (await cont.count()) await cont.click({ timeout: 10000 })
+      }
+      return 'doit'
+    }
+    const primary = tip.locator('.demo-tour-btn.is-primary')
+    const label = ((await primary.textContent()) || '').trim()
+    await primary.click({ timeout: 10000 })
+    return /^Finish$/i.test(label) ? 'finish' : 'next'
+  }
+
+  async function assertMobileTourSpotClearsTip(sectionLabel, maxSteps = 20) {
+    await startGuideSection(sectionLabel)
+    const seen = []
+    for (let i = 0; i < maxSteps; i++) {
+      const tip = page.locator('.demo-tour-tooltip')
+      if (!(await tip.count())) break
+      await page.waitForTimeout(450)
+      const measure = await measureTourSpotTipOverlap()
+      seen.push(measure.title || `(step ${i})`)
+      if (!measure.skipped) {
+        record(
+          `Demo tour spotlight clears tip "${measure.title}" at 390×844 (${sectionLabel})`,
+          Boolean(measure.ok),
+          JSON.stringify(measure),
+        )
+      }
+      const result = await advanceTourPrimary()
+      if (result === 'finish') break
+      await page.waitForTimeout(350)
+    }
+    return seen
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
+
+  // Click-through: spotlight hole must not be swallowed by .demo-tour-root.
+  await startGuideSection('Route check')
+  {
+    const tip = page.locator('.demo-tour-tooltip')
+    // Walk to "Show sample permits".
+    for (let i = 0; i < 8; i++) {
+      await tip.waitFor({ state: 'visible', timeout: 15000 })
+      const title = ((await tip.locator('.demo-tour-title').textContent()) || '').trim()
+      if (title === 'Show sample permits') break
+      await tip.locator('.demo-tour-btn.is-primary').click({ timeout: 10000 })
+      await page.waitForTimeout(300)
+    }
+    await tip.locator('.demo-tour-title', { hasText: 'Show sample permits' }).waitFor({ timeout: 15000 })
+    await page.waitForTimeout(500)
+    const hole = await page.evaluate(() => {
+      const root = document.querySelector('.demo-tour-root')
+      const btn = document.querySelector('[data-tour="route-sample-toggle"]')
+      const spot = document.querySelector('.demo-tour-spotlight')
+      if (!root || !btn || !spot) {
+        return { ok: false, reason: 'missing', hasRoot: !!root, hasBtn: !!btn, hasSpot: !!spot }
+      }
+      const r = btn.getBoundingClientRect()
+      const cx = r.left + r.width / 2
+      const cy = r.top + r.height / 2
+      const top = document.elementFromPoint(cx, cy)
+      const through =
+        Boolean(top && (top === btn || btn.contains(top)))
+        && !root.contains(top)
+      return {
+        ok: through && getComputedStyle(root).pointerEvents === 'none',
+        rootPe: getComputedStyle(root).pointerEvents,
+        hitTag: top ? top.tagName : null,
+        hitTour: top ? Boolean(top.closest && top.closest('[data-demo-tour-root]')) : null,
+        hitText: top && 'textContent' in top ? String(top.textContent || '').trim().slice(0, 40) : null,
+      }
+    })
+    record(
+      'Demo tour spotlight hole is clickable at 390×844 (Show sample permits)',
+      Boolean(hole.ok),
+      JSON.stringify(hole),
+    )
+    // Actually tap the highlighted control (not Do-it) and expect the tour to advance.
+    await page.locator('[data-tour="route-sample-toggle"]').click({ timeout: 10000 })
+    await tip.locator('.demo-tour-title', { hasText: 'Pick a sample permit' }).waitFor({ timeout: 15000 })
+    record(
+      'Demo tour advances when the spotlight target is clicked directly',
+      ((await tip.locator('.demo-tour-title').textContent()) || '').trim() === 'Pick a sample permit',
+    )
+    await tip.getByRole('button', { name: 'Exit' }).click({ timeout: 10000 }).catch(async () => {
+      // Compact sheet has no Exit — finish/skip via primary or reopen.
+      await page.keyboard.press('Escape')
+    })
+    await page.waitForTimeout(200)
+  }
+
+  for (const section of [
+    'Route check',
+    'Corridor monitor',
+    'Settings',
+    'Overview',
+    'Jobs',
+    'Alerts & history',
+  ]) {
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
+    await ensureLoggedIn('Demo')
+    // Dismiss any leftover tip.
+    if (await page.locator('.demo-tour-tooltip').count()) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+    }
+    await assertMobileTourSpotClearsTip(section)
+  }
+
   await page.setViewportSize({ width: 1440, height: 900 })
 
   // Mobile: corridor legend must fully contain Flowing / Pressure / Restricted.

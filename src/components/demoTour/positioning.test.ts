@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  COMPACT_SHEET_H,
   TALL_SPOT_VIEWPORT_RATIO,
   TALL_VIEWPORT_RATIO,
   clampSpotlightRect,
   computeScrollDelta,
+  decideMobileSheetPlacement,
   isUsableSpotlightRect,
   placeTooltip,
+  rectsIntersect,
   targetFitsAboveSheet,
   verdictCtaBody,
 } from './positioning.ts'
@@ -71,6 +74,58 @@ test('targetFitsAboveSheet detects when the sheet would cover the target', () =>
   assert.equal(targetFitsAboveSheet(button, mobile, 306), true)
   const huge = { top: 100, left: 0, width: 390, height: 700 }
   assert.equal(targetFitsAboveSheet(huge, mobile, 300), false)
+})
+
+test('rectsIntersect is false when edges only touch', () => {
+  const a = { top: 0, left: 0, width: 100, height: 100 }
+  const b = { top: 100, left: 0, width: 100, height: 50 }
+  assert.equal(rectsIntersect(a, b), false)
+  assert.equal(rectsIntersect(a, { ...b, top: 99 }), true)
+})
+
+test('decideMobileSheetPlacement flips to top when target sits under the bottom sheet', () => {
+  const mobile = { width: 390, height: 844 }
+  const sheetH = 280 // → bottom sheet top at 844-56-280 = 508
+  // Route check "Run the check" — y 618–674 under the sheet.
+  const runCheck = { top: 618, left: 24, width: 342, height: 56 }
+  assert.equal(decideMobileSheetPlacement(runCheck, mobile, { sheetHeight: sheetH }), 'sheet-top')
+  // "Show sample permits" — y 496–552 overlaps sheet top at 508.
+  const samples = { top: 496, left: 24, width: 342, height: 56 }
+  assert.equal(decideMobileSheetPlacement(samples, mobile, { sheetHeight: sheetH }), 'sheet-top')
+  // Settings "Save changes" — y 691–741.
+  const save = { top: 691, left: 24, width: 342, height: 50 }
+  assert.equal(decideMobileSheetPlacement(save, mobile, { sheetHeight: sheetH }), 'sheet-top')
+})
+
+test('decideMobileSheetPlacement keeps bottom sheet when the target clears it', () => {
+  const mobile = { width: 390, height: 844 }
+  const clear = { top: 120, left: 24, width: 342, height: 48 }
+  assert.equal(decideMobileSheetPlacement(clear, mobile, { sheetHeight: 280 }), 'sheet')
+})
+
+test('decideMobileSheetPlacement uses compact when neither full edge clears the target', () => {
+  const mobile = { width: 390, height: 844 }
+  // Tall corridor panel spanning most of the viewport below the header.
+  const tall = { top: 70, left: 0, width: 390, height: 700 }
+  const placement = decideMobileSheetPlacement(tall, mobile, {
+    sheetHeight: 280,
+    compactHeight: COMPACT_SHEET_H,
+  })
+  assert.ok(
+    placement === 'sheet-compact' || placement === 'sheet-compact-top',
+    `expected compact, got ${placement}`,
+  )
+})
+
+test('placeTooltip on mobile returns sheet-top for under-sheet targets', () => {
+  const mobile = { width: 390, height: 844 }
+  const tip = { width: 366, height: 280 }
+  const runCheck = { top: 618, left: 24, width: 342, height: 56 }
+  const placed = placeTooltip(runCheck, tip, mobile, {
+    sheetHeight: 280,
+    decisionSheetHeight: 280,
+  })
+  assert.equal(placed.placement, 'sheet-top')
 })
 
 test('verdictCtaBody mirrors the live verdict label', () => {
