@@ -155,7 +155,7 @@ export default function MarketplaceActivity() {
       </div>
 
       <section className="route-alert-log" data-testid="alerts-by-route" data-tour="activity-alerts">
-        <header>
+        <header data-tour="activity-alerts-heading">
           <div><BellRing size={20} /><h2>Alerts by route</h2></div>
           <span>{alertGroups.length} route{alertGroups.length === 1 ? '' : 's'} · {shown.length} alerts</span>
         </header>
@@ -251,7 +251,7 @@ export default function MarketplaceActivity() {
       </section>
 
       <section className="route-alert-log check-history-log" data-testid="check-history-by-route" data-tour="activity-history">
-        <header>
+        <header data-tour="activity-history-heading">
           <div><History size={20} /><h2>Check history by route</h2></div>
           <span>{historyGroups.length} route{historyGroups.length === 1 ? '' : 's'} · {shownHistory.length} checks</span>
         </header>

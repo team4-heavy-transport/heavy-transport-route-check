@@ -1,10 +1,15 @@
 export type Rect = { top: number; left: number; width: number; height: number }
 
-export type TooltipPlacement = 'below' | 'above' | 'center' | 'sheet'
+export type TooltipPlacement = 'below' | 'above' | 'left' | 'right' | 'corner' | 'center' | 'sheet' | 'sheet-top'
 
-const PAD = 12
+const PAD = 10
 const GAP = 10
 const SPOT_PAD = 6
+const HEADER_H = 56
+/** Target taller than this fraction of the viewport is truncated for the spotlight. */
+export const TALL_VIEWPORT_RATIO = 0.6
+/** Spotlight shows at most this fraction of the viewport height for tall targets. */
+export const TALL_SPOT_VIEWPORT_RATIO = 0.4
 
 export function prefersReducedMotion(): boolean {
   try {
@@ -20,8 +25,8 @@ export function isNarrowViewport(width = typeof window !== 'undefined' ? window.
 
 export function expandRect(rect: DOMRect | Rect, pad = SPOT_PAD): Rect {
   return {
-    top: Math.max(0, rect.top - pad),
-    left: Math.max(0, rect.left - pad),
+    top: rect.top - pad,
+    left: rect.left - pad,
     width: rect.width + pad * 2,
     height: rect.height + pad * 2,
   }
@@ -31,61 +36,171 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+/** Keep the spotlight inside the viewport; optionally truncate tall targets from the top. */
+export function clampSpotlightRect(
+  rect: Rect,
+  viewport: { width: number; height: number },
+): Rect {
+  let { top, left, width, height } = rect
+
+  const maxSpotH = Math.floor(viewport.height * TALL_SPOT_VIEWPORT_RATIO)
+  if (height > viewport.height * TALL_VIEWPORT_RATIO) {
+    height = Math.min(height, maxSpotH)
+  }
+
+  // Clamp into viewport with a small inset so the outline stays visible.
+  left = clamp(left, 0, Math.max(0, viewport.width - 4))
+  top = clamp(top, 0, Math.max(0, viewport.height - 4))
+  width = Math.min(width, viewport.width - left)
+  height = Math.min(height, viewport.height - top)
+  width = Math.max(4, width)
+  height = Math.max(4, height)
+
+  return { top, left, width, height }
+}
+
 export function measureTooltipSize(el: HTMLElement | null): { width: number; height: number } {
   if (!el) return { width: 360, height: 200 }
   const rect = el.getBoundingClientRect()
   return { width: rect.width || 360, height: rect.height || 200 }
 }
 
+function fitsVertically(top: number, height: number, viewportH: number): boolean {
+  return top >= PAD && top + height + PAD <= viewportH
+}
+
+function fitsHorizontally(left: number, width: number, viewportW: number): boolean {
+  return left >= PAD && left + width + PAD <= viewportW
+}
+
+/**
+ * Place the tip fully inside the viewport (PAD margin). Prefers below → above →
+ * right → left; if nothing fits beside the target, pins to a viewport corner.
+ */
 export function placeTooltip(
   target: Rect | null,
   tooltip: { width: number; height: number },
   viewport: { width: number; height: number },
+  opts: { sheetHeight?: number; preferSheetTop?: boolean } = {},
 ): { top: number; left: number; placement: TooltipPlacement } {
+  const tipW = Math.min(tooltip.width, viewport.width - PAD * 2)
+  const tipH = Math.min(tooltip.height, viewport.height - PAD * 2)
+
   if (!target) {
     return {
-      top: Math.max(PAD, (viewport.height - tooltip.height) / 2),
-      left: Math.max(PAD, (viewport.width - tooltip.width) / 2),
+      top: Math.max(PAD, (viewport.height - tipH) / 2),
+      left: Math.max(PAD, (viewport.width - tipW) / 2),
       placement: 'center',
     }
   }
 
   if (isNarrowViewport(viewport.width)) {
+    const sheetH = opts.sheetHeight ?? tipH
+    if (opts.preferSheetTop) {
+      return { top: HEADER_H + PAD, left: PAD, placement: 'sheet-top' }
+    }
     return {
-      top: viewport.height - tooltip.height - 72,
+      top: Math.max(PAD, viewport.height - sheetH - 72),
       left: PAD,
       placement: 'sheet',
     }
   }
 
   const belowTop = target.top + target.height + GAP
-  const aboveTop = target.top - tooltip.height - GAP
-  const fitsBelow = belowTop + tooltip.height + PAD <= viewport.height
-  const fitsAbove = aboveTop >= PAD
+  const aboveTop = target.top - tipH - GAP
+  const rightLeft = target.left + target.width + GAP
+  const leftLeft = target.left - tipW - GAP
 
-  let top: number
-  let placement: TooltipPlacement
-  if (fitsBelow || (!fitsAbove && belowTop < viewport.height)) {
-    top = belowTop
-    placement = 'below'
-  } else if (fitsAbove) {
-    top = aboveTop
-    placement = 'above'
-  } else {
-    top = clamp(target.top, PAD, viewport.height - tooltip.height - PAD)
-    placement = 'center'
+  const candidates: Array<{ top: number; left: number; placement: TooltipPlacement }> = [
+    {
+      top: belowTop,
+      left: clamp(target.left + target.width / 2 - tipW / 2, PAD, viewport.width - tipW - PAD),
+      placement: 'below',
+    },
+    {
+      top: aboveTop,
+      left: clamp(target.left + target.width / 2 - tipW / 2, PAD, viewport.width - tipW - PAD),
+      placement: 'above',
+    },
+    {
+      top: clamp(target.top + target.height / 2 - tipH / 2, PAD, viewport.height - tipH - PAD),
+      left: rightLeft,
+      placement: 'right',
+    },
+    {
+      top: clamp(target.top + target.height / 2 - tipH / 2, PAD, viewport.height - tipH - PAD),
+      left: leftLeft,
+      placement: 'left',
+    },
+  ]
+
+  for (const c of candidates) {
+    if (fitsVertically(c.top, tipH, viewport.height) && fitsHorizontally(c.left, tipW, viewport.width)) {
+      return c
+    }
   }
 
-  const idealLeft = target.left + target.width / 2 - tooltip.width / 2
-  const left = clamp(idealLeft, PAD, viewport.width - tooltip.width - PAD)
-
-  return { top, left, placement }
+  // Nothing fits beside the target — pin fully inside a viewport corner (prefer bottom-right).
+  const cornerLeft = viewport.width - tipW - PAD
+  const cornerTop = viewport.height - tipH - PAD
+  return {
+    top: clamp(cornerTop, PAD, Math.max(PAD, viewport.height - tipH - PAD)),
+    left: clamp(cornerLeft, PAD, Math.max(PAD, viewport.width - tipW - PAD)),
+    placement: 'corner',
+  }
 }
 
-export function scrollTargetIntoView(el: Element): void {
+/** Whether the target can sit fully in the band above a bottom sheet. */
+export function targetFitsAboveSheet(
+  target: Rect,
+  viewport: { width: number; height: number },
+  sheetHeight: number,
+): boolean {
+  const available = viewport.height - HEADER_H - sheetHeight - PAD * 2
+  return target.height <= available
+}
+
+/**
+ * Scroll so the target sits in the visible band (above a bottom sheet on mobile).
+ * Uses window scroll (and nearest scroll parent) rather than block:'center'.
+ */
+export function scrollTargetIntoView(
+  el: Element,
+  opts: { sheetHeight?: number; headerHeight?: number } = {},
+): void {
   const behavior = prefersReducedMotion() ? 'instant' : 'smooth'
+  const headerH = opts.headerHeight ?? HEADER_H
+  const sheetH = opts.sheetHeight ?? 0
+  const narrow = typeof window !== 'undefined' && isNarrowViewport(window.innerWidth)
+
   try {
-    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: behavior as ScrollBehavior })
+    if (narrow && sheetH > 0) {
+      const rect = el.getBoundingClientRect()
+      const visibleBottom = window.innerHeight - sheetH - PAD
+      const visibleTop = headerH + PAD
+      const visibleMid = (visibleTop + visibleBottom) / 2
+      const targetMid = rect.top + rect.height / 2
+      // Prefer aligning the target into the upper visible band.
+      let delta: number
+      if (rect.height > visibleBottom - visibleTop) {
+        // Tall target: pin its top just under the header.
+        delta = rect.top - visibleTop
+      } else if (rect.bottom > visibleBottom || rect.top < visibleTop) {
+        delta = targetMid - visibleMid
+      } else {
+        delta = 0
+      }
+      if (Math.abs(delta) > 2) {
+        window.scrollBy({ top: delta, behavior: behavior as ScrollBehavior })
+      }
+      return
+    }
+
+    el.scrollIntoView({
+      block: narrow ? 'start' : 'center',
+      inline: 'nearest',
+      behavior: behavior as ScrollBehavior,
+    })
   } catch {
     el.scrollIntoView(true)
   }
@@ -138,4 +253,43 @@ export function clickSelector(selector: string): boolean {
     return true
   }
   return false
+}
+
+/** App dialogs/sheets that should take focus over the tour. */
+export const APP_DIALOG_SELECTOR =
+  '.action-sheet-overlay[role="dialog"], .dialog-overlay[role="dialog"]'
+
+export function isAppDialogOpen(root: ParentNode = document): boolean {
+  return Boolean(root.querySelector(APP_DIALOG_SELECTOR))
+}
+
+export function readVerdictFromDom(root: ParentNode = document): 'READY' | 'VERIFY' | 'HOLD' | null {
+  const banner = root.querySelector('[data-tour="route-verdict-banner"]')
+  if (!banner) return null
+  const cls = typeof banner.className === 'string' ? banner.className : ''
+  if (/\bverdict-hold\b/i.test(cls) || /\bverdict-red\b/i.test(cls)) return 'HOLD'
+  if (/\bverdict-verify\b/i.test(cls) || /\bverdict-amber\b/i.test(cls) || /\bverdict-yellow\b/i.test(cls)) {
+    return 'VERIFY'
+  }
+  if (/\bverdict-ready\b/i.test(cls) || /\bverdict-green\b/i.test(cls)) return 'READY'
+  const label = banner.querySelector('.verdict-label')?.textContent?.trim().toUpperCase()
+  if (label === 'READY' || label === 'VERIFY' || label === 'HOLD') return label
+  const cta = root.querySelector('[data-tour="route-verdict-cta"]')?.textContent?.trim() ?? ''
+  if (/take action/i.test(cta)) return 'HOLD'
+  if (/verify before/i.test(cta)) return 'VERIFY'
+  if (/proceed/i.test(cta)) return 'READY'
+  return null
+}
+
+export function verdictCtaBody(verdict: 'READY' | 'VERIFY' | 'HOLD' | null): string {
+  if (verdict === 'HOLD') {
+    return 'Your result is HOLD, so the button is Take action — it lists what you can do next (review, escalate, hold departure, or request an on-site check).'
+  }
+  if (verdict === 'VERIFY') {
+    return 'Your result is VERIFY, so the button is Verify before departure — it opens a dialog to log an on-site check request.'
+  }
+  if (verdict === 'READY') {
+    return 'Your result is READY, so the button is Proceed with departure — use it when the live feeds look clear for this permit.'
+  }
+  return 'The button matches the verdict: Proceed with departure (READY), Verify before departure (on-site request), or Take action (HOLD options).'
 }

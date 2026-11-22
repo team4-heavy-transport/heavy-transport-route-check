@@ -994,7 +994,7 @@ export default function RouteIntelligencePolished() {
         {/* Step 1: Import Route */}
         {step === 'import' && (
           <div className="route-polished-card" data-tour="route-step-import">
-            <div className="card-header">
+            <div className="card-header" data-tour="route-import-heading">
               <FileUp size={24} />
               <div>
                 <h2>Import your permitted route</h2>
@@ -1120,7 +1120,7 @@ export default function RouteIntelligencePolished() {
         {/* Step 2: Vehicle Dimensions */}
         {step === 'vehicle' && !checking && !result && (
           <div className="route-polished-card" data-tour="route-step-vehicle">
-            <div className="card-header">
+            <div className="card-header" data-tour="route-vehicle-heading">
               <Truck size={24} />
               <div>
                 <h2>Vehicle dimensions</h2>
@@ -1488,7 +1488,7 @@ export default function RouteIntelligencePolished() {
                 </div>
 
                 <div className="evidence-section" data-tour="route-evidence">
-                  <h3>
+                  <h3 data-tour="route-evidence-heading">
                     Evidence ({displayed.evidence.length})
                   </h3>
                   <div className="confirm-on-site-bar" data-tour="route-confirm-bar">

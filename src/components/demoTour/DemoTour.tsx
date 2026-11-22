@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { BookOpen, X } from 'lucide-react'
+import { BookOpen } from 'lucide-react'
 import {
   TOUR_SECTIONS,
   TOUR_STEPS,
@@ -18,6 +18,7 @@ import {
   readTourProgress,
   resetTourProgress,
   sectionLabel,
+  sectionsCompletedByAdvance,
   stepsForSection,
   writeTourProgress,
   type DemoTourProgress,
@@ -25,13 +26,19 @@ import {
   type TourStepDef,
 } from '../../lib/demoTour'
 import {
+  APP_DIALOG_SELECTOR,
   clickSelector,
+  clampSpotlightRect,
   expandRect,
+  isAppDialogOpen,
   isNarrowViewport,
   measureTooltipSize,
   placeTooltip,
   prefersReducedMotion,
+  readVerdictFromDom,
   scrollTargetIntoView,
+  targetFitsAboveSheet,
+  verdictCtaBody,
   waitForSelector,
   type Rect,
 } from './positioning'
@@ -46,6 +53,8 @@ type Mode =
 function stepsForFullTour(): TourStepDef[] {
   return [...TOUR_STEPS]
 }
+
+const SHEET_FALLBACK_H = 280
 
 export default function DemoTour() {
   const navigate = useNavigate()
@@ -68,8 +77,12 @@ export default function DemoTour() {
   const [liveMessage, setLiveMessage] = useState('')
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 60, left: 16 })
   const [guideSlot, setGuideSlot] = useState<Element | null>(null)
+  const [appDialogOpen, setAppDialogOpen] = useState(false)
+  const [dynamicBody, setDynamicBody] = useState<string | null>(null)
   const waitingRef = useRef(false)
   const skipGuardRef = useRef<string | null>(null)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
 
   // Auto-open welcome on first Demo visit.
   useEffect(() => {
@@ -101,6 +114,19 @@ export default function DemoTour() {
     writeTourProgress(next)
     setProgress(next)
   }, [])
+
+  const markSectionsLeaving = useCallback(
+    (steps: TourStepDef[], fromIndex: number, toIndex: number) => {
+      const leaving = sectionsCompletedByAdvance(steps, fromIndex, toIndex)
+      if (!leaving.length) return
+      let next = readTourProgress()
+      for (const section of leaving) {
+        next = markSectionComplete(section)
+      }
+      persist(next)
+    },
+    [persist],
+  )
 
   const startSteps = useCallback(
     (steps: TourStepDef[], full: boolean) => {
@@ -154,24 +180,94 @@ export default function DemoTour() {
 
   const goToIndex = useCallback(
     (nextIndex: number) => {
-      if (mode.kind !== 'tour') return
+      const current = modeRef.current
+      if (current.kind !== 'tour') return
       if (nextIndex < 0) return
-      if (nextIndex >= mode.steps.length) {
-        finishCurrentGuide()
+      markSectionsLeaving(current.steps, current.index, nextIndex)
+      if (nextIndex >= current.steps.length) {
+        const section = current.steps[current.index]?.section
+        if (section) {
+          const next = markSectionComplete(section)
+          if (current.full) {
+            const remaining = TOUR_SECTIONS.filter(s => !next.completedSections.includes(s.id))
+            persist(
+              remaining.length === 0
+                ? { ...next, tourDismissed: true, welcomeSeen: true }
+                : next,
+            )
+          } else {
+            persist(next)
+          }
+        }
+        closeTour()
         return
       }
-      const step = mode.steps[nextIndex]
+      const step = current.steps[nextIndex]
       if (step.route && location.pathname !== step.route) {
         navigate(step.route)
       }
       waitingRef.current = false
-      setMode({ ...mode, index: nextIndex })
+      setMode({ ...current, index: nextIndex })
     },
-    [finishCurrentGuide, location.pathname, mode, navigate],
+    [closeTour, location.pathname, markSectionsLeaving, navigate, persist],
   )
 
-  const goNext = useCallback(() => goToIndex(mode.kind === 'tour' ? mode.index + 1 : 0), [goToIndex, mode])
-  const goBack = useCallback(() => goToIndex(mode.kind === 'tour' ? mode.index - 1 : 0), [goToIndex, mode])
+  const goNext = useCallback(() => {
+    const current = modeRef.current
+    if (current.kind !== 'tour') return
+    goToIndex(current.index + 1)
+  }, [goToIndex])
+
+  const goBack = useCallback(() => {
+    const current = modeRef.current
+    if (current.kind !== 'tour') return
+    goToIndex(current.index - 1)
+  }, [goToIndex])
+
+  // Watch app dialogs so the tour can yield focus.
+  useEffect(() => {
+    if (mode.kind !== 'tour') {
+      setAppDialogOpen(false)
+      return
+    }
+    const check = () => setAppDialogOpen(isAppDialogOpen())
+    check()
+    const observer = new MutationObserver(check)
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true })
+    const timer = window.setInterval(check, 250)
+    return () => {
+      observer.disconnect()
+      window.clearInterval(timer)
+    }
+  }, [mode.kind, currentStep?.id])
+
+  // Resolve dynamic copy for the verdict CTA step.
+  useEffect(() => {
+    if (mode.kind !== 'tour' || !currentStep) {
+      setDynamicBody(null)
+      return
+    }
+    if (currentStep.id === 'route-cta') {
+      setDynamicBody(verdictCtaBody(readVerdictFromDom()))
+      return
+    }
+    if (currentStep.id === 'route-cta-panel') {
+      const verdict = readVerdictFromDom()
+      if (verdict === 'HOLD') {
+        setDynamicBody(
+          'The Take action sheet lists review, escalate, hold departure, and on-site check. Cancel closes it — then continue the tour.',
+        )
+      } else if (verdict === 'VERIFY') {
+        setDynamicBody(
+          'The on-site check dialog saves a field note to your account history (nothing is sent externally). Cancel or Log check request closes it — then continue.',
+        )
+      } else {
+        setDynamicBody(currentStep.body)
+      }
+      return
+    }
+    setDynamicBody(null)
+  }, [mode, currentStep, appDialogOpen])
 
   // Resolve anchor for current step.
   useEffect(() => {
@@ -195,6 +291,15 @@ export default function DemoTour() {
         if (!cancelled) goToIndex(stepIndex + 1)
         return
       }
+      // READY has no action sheet — skip the panel follow-up.
+      if (step.id === 'route-cta-panel' && !isAppDialogOpen() && readVerdictFromDom() === 'READY') {
+        if (!cancelled && skipGuardRef.current !== step.id) {
+          skipGuardRef.current = step.id
+          goToIndex(stepIndex + 1)
+        }
+        return
+      }
+      // On verdict CTA for READY, don't wait for a dialog that will never open.
       if (!step.anchor) {
         if (!cancelled) {
           setAnchorEl(null)
@@ -217,7 +322,19 @@ export default function DemoTour() {
         return
       }
       skipGuardRef.current = null
-      scrollTargetIntoView(found)
+
+      const tipEl = tooltipRef.current
+      const sheetH =
+        tipEl && isNarrowViewport()
+          ? tipEl.getBoundingClientRect().height || SHEET_FALLBACK_H
+          : isNarrowViewport()
+            ? SHEET_FALLBACK_H
+            : 0
+      scrollTargetIntoView(found, { sheetHeight: sheetH })
+      // Re-measure after scroll settles.
+      const settleMs = prefersReducedMotion() ? 40 : 320
+      await new Promise(r => setTimeout(r, settleMs))
+      if (cancelled) return
       setAnchorEl(found)
     }
 
@@ -235,10 +352,19 @@ export default function DemoTour() {
     const update = () => {
       const tipSize = measureTooltipSize(tooltipRef.current)
       const viewport = { width: window.innerWidth, height: window.innerHeight }
+      const narrow = isNarrowViewport(viewport.width)
+      const sheetH = narrow ? tipSize.height || SHEET_FALLBACK_H : 0
+
       if (anchorEl) {
-        const rect = expandRect(anchorEl.getBoundingClientRect())
+        const raw = expandRect(anchorEl.getBoundingClientRect())
+        const rect = clampSpotlightRect(raw, viewport)
         setSpot(rect)
-        setTipPos(placeTooltip(rect, tipSize, viewport))
+
+        let preferSheetTop = false
+        if (narrow && sheetH > 0) {
+          preferSheetTop = !targetFitsAboveSheet(rect, viewport, sheetH)
+        }
+        setTipPos(placeTooltip(rect, tipSize, viewport, { sheetHeight: sheetH, preferSheetTop }))
       } else {
         setSpot(null)
         setTipPos(placeTooltip(null, tipSize, viewport))
@@ -246,6 +372,8 @@ export default function DemoTour() {
     }
 
     update()
+    // Second pass after layout so tip size is accurate (then clamp again).
+    const raf = window.requestAnimationFrame(update)
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null
     if (anchorEl) ro?.observe(anchorEl)
     if (tooltipRef.current) ro?.observe(tooltipRef.current)
@@ -253,29 +381,40 @@ export default function DemoTour() {
     window.addEventListener('resize', update)
     window.addEventListener('scroll', onScroll, true)
     return () => {
+      window.cancelAnimationFrame(raf)
       ro?.disconnect()
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', onScroll, true)
     }
   }, [anchorEl, mode, currentStep?.id, tipPos.placement])
 
-  // Focus tooltip when step changes.
+  // Focus tooltip when step changes (yield while app dialog owns focus).
   useEffect(() => {
     if (mode.kind === 'tour' && currentStep) {
       const label = sectionLabel(currentStep.section)
-      setLiveMessage(`${currentStep.title}. ${currentStep.body} Step ${mode.index + 1} of ${mode.steps.length}. ${label}.`)
-      queueMicrotask(() => tooltipRef.current?.focus())
+      const body = dynamicBody ?? currentStep.body
+      setLiveMessage(`${currentStep.title}. ${body} Step ${mode.index + 1} of ${mode.steps.length}. ${label}.`)
+      if (!appDialogOpen) {
+        queueMicrotask(() => tooltipRef.current?.focus())
+      }
     } else if (mode.kind === 'welcome') {
       queueMicrotask(() => welcomeRef.current?.focus())
     } else if (mode.kind === 'menu') {
       queueMicrotask(() => menuRef.current?.focus())
     }
-  }, [mode, currentStep])
+  }, [mode, currentStep, dynamicBody, appDialogOpen])
 
   // Interactive advance watchers.
   useEffect(() => {
     if (mode.kind !== 'tour' || !currentStep) return
     const advance = currentStep.advance
+    // READY verdict CTA: treat as plain next (no dialog to wait for).
+    if (
+      currentStep.id === 'route-cta' &&
+      readVerdictFromDom() === 'READY'
+    ) {
+      return
+    }
     if (!advance || advance.type === 'next') return
 
     waitingRef.current = true
@@ -327,6 +466,8 @@ export default function DemoTour() {
   useEffect(() => {
     if (mode.kind === 'idle') return
     const onKey = (event: KeyboardEvent) => {
+      // Yield Esc to the app dialog while it is open.
+      if (appDialogOpen && mode.kind === 'tour') return
       if (event.key === 'Escape') {
         event.preventDefault()
         if (mode.kind === 'welcome') {
@@ -342,10 +483,12 @@ export default function DemoTour() {
         closeTour()
         return
       }
-      if (mode.kind !== 'tour') return
+      if (mode.kind !== 'tour' || appDialogOpen) return
       if (event.key === 'ArrowRight') {
         event.preventDefault()
-        if (!currentStep?.advance || currentStep.advance.type === 'next') goNext()
+        const step = currentStep
+        const readyCta = step?.id === 'route-cta' && readVerdictFromDom() === 'READY'
+        if (!step?.advance || step.advance.type === 'next' || readyCta) goNext()
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()
         goBack()
@@ -353,7 +496,7 @@ export default function DemoTour() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [mode, currentStep, closeTour, goBack, goNext, persist])
+  }, [mode, currentStep, closeTour, goBack, goNext, persist, appDialogOpen])
 
   const onDoItForMe = () => {
     if (!currentStep) return
@@ -406,6 +549,19 @@ export default function DemoTour() {
     ? stepsForSection(currentStep.section).findIndex(s => s.id === currentStep.id) + 1
     : 0
   const sectionTotal = currentStep ? stepsForSection(currentStep.section).length : 0
+
+  const verdict = currentStep?.id === 'route-cta' || currentStep?.id === 'route-cta-panel'
+    ? readVerdictFromDom()
+    : null
+  const showDoIt =
+    Boolean(currentStep?.doItLabel) &&
+    !(currentStep?.id === 'route-cta' && verdict === 'READY')
+  const readyCtaNext =
+    currentStep?.id === 'route-cta' && verdict === 'READY'
+  const waitingAdvance =
+    Boolean(currentStep?.advance && currentStep.advance.type !== 'next') && !readyCtaNext
+  const tipBody = dynamicBody ?? currentStep?.body ?? ''
+  const yieldToDialog = appDialogOpen && currentStep?.id === 'route-cta-panel'
 
   return (
     <div className="demo-tour-root" data-demo-tour-root="">
@@ -505,80 +661,121 @@ export default function DemoTour() {
       {mode.kind === 'tour' && currentStep &&
         createPortal(
           <>
-            {/* Dim overlay with cut-out via spotlight box-shadow; keep target clickable */}
-            {!spot && <div className="demo-tour-overlay" aria-hidden="true" />}
-            {spot && (
+            {/* Yield shields/dim while an app dialog is open so Esc/focus stay with the app. */}
+            {!yieldToDialog && (
               <>
-                {/* Four shields around the spotlight so the target stays clickable */}
-                <div className="demo-tour-clickshield" style={{ top: 0, left: 0, width: '100%', height: Math.max(0, spot.top) }} aria-hidden="true" />
-                <div className="demo-tour-clickshield" style={{ top: spot.top + spot.height, left: 0, width: '100%', height: Math.max(0, window.innerHeight - spot.top - spot.height) }} aria-hidden="true" />
-                <div className="demo-tour-clickshield" style={{ top: spot.top, left: 0, width: Math.max(0, spot.left), height: spot.height }} aria-hidden="true" />
-                <div className="demo-tour-clickshield" style={{ top: spot.top, left: spot.left + spot.width, width: Math.max(0, window.innerWidth - spot.left - spot.width), height: spot.height }} aria-hidden="true" />
-                <div
-                  className="demo-tour-spotlight"
-                  style={{
-                    top: spot.top,
-                    left: spot.left,
-                    width: spot.width,
-                    height: spot.height,
-                    boxShadow: 'none',
-                    outline: '2px solid var(--accent)',
-                    outlineOffset: 0,
-                  }}
-                  aria-hidden="true"
-                />
+                {!spot && <div className="demo-tour-overlay" aria-hidden="true" />}
+                {spot && (
+                  <>
+                    <div
+                      className="demo-tour-clickshield"
+                      style={{ top: 0, left: 0, width: '100%', height: Math.max(0, spot.top) }}
+                      aria-hidden="true"
+                    />
+                    <div
+                      className="demo-tour-clickshield"
+                      style={{
+                        top: spot.top + spot.height,
+                        left: 0,
+                        width: '100%',
+                        height: Math.max(0, window.innerHeight - spot.top - spot.height),
+                      }}
+                      aria-hidden="true"
+                    />
+                    <div
+                      className="demo-tour-clickshield"
+                      style={{ top: spot.top, left: 0, width: Math.max(0, spot.left), height: spot.height }}
+                      aria-hidden="true"
+                    />
+                    <div
+                      className="demo-tour-clickshield"
+                      style={{
+                        top: spot.top,
+                        left: spot.left + spot.width,
+                        width: Math.max(0, window.innerWidth - spot.left - spot.width),
+                        height: spot.height,
+                      }}
+                      aria-hidden="true"
+                    />
+                    <div
+                      className="demo-tour-spotlight"
+                      style={{
+                        top: spot.top,
+                        left: spot.left,
+                        width: spot.width,
+                        height: spot.height,
+                      }}
+                      aria-hidden="true"
+                    />
+                  </>
+                )}
               </>
             )}
 
             <div
               ref={tooltipRef}
-              className={`demo-tour-tooltip${tipPos.placement === 'sheet' || isNarrowViewport() ? ' is-sheet' : ''}`}
+              className={[
+                'demo-tour-tooltip',
+                tipPos.placement === 'sheet' || (isNarrowViewport() && tipPos.placement !== 'sheet-top')
+                  ? ' is-sheet'
+                  : '',
+                tipPos.placement === 'sheet-top' ? ' is-sheet-top' : '',
+                yieldToDialog ? ' is-yielding' : '',
+              ].join('')}
               role="dialog"
-              aria-modal="true"
+              aria-modal={yieldToDialog ? 'false' : 'true'}
               aria-labelledby={titleId}
               aria-describedby={bodyId}
               tabIndex={-1}
+              data-tour-yield={yieldToDialog ? 'app-dialog' : undefined}
               style={
-                tipPos.placement === 'sheet' || isNarrowViewport()
+                tipPos.placement === 'sheet' || tipPos.placement === 'sheet-top' || isNarrowViewport()
                   ? undefined
-                  : { top: tipPos.top, left: tipPos.left }
+                  : yieldToDialog
+                    ? { top: 12, left: 12 }
+                    : { top: tipPos.top, left: tipPos.left }
               }
             >
               <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
               <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
-              <p id={bodyId} className="demo-tour-body">{currentStep.body}</p>
-              <p className="demo-tour-meta">
-                Step {mode.index + 1} of {mode.steps.length}
-                {sectionTotal > 0 ? ` · ${sectionLabel(currentStep.section)} ${sectionIndex}/${sectionTotal}` : ''}
-              </p>
-              <div className="demo-tour-actions">
-                <button type="button" className="demo-tour-btn is-ghost" onClick={() => finishCurrentGuide()}>
-                  Skip guide
-                </button>
-                <button type="button" className="demo-tour-btn is-ghost" onClick={() => closeTour()} aria-label="Exit tour">
-                  <X size={16} aria-hidden />
-                  Exit
-                </button>
-                <span className="demo-tour-actions-spacer" />
-                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                  Back
-                </button>
-                {currentStep.doItLabel && (
-                  <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
-                    {currentStep.doItLabel}
+              <p id={bodyId} className="demo-tour-body">{tipBody}</p>
+              <div className="demo-tour-meta-row">
+                <p className="demo-tour-meta">
+                  Step {mode.index + 1} of {mode.steps.length}
+                  {sectionTotal > 0 ? ` · ${sectionLabel(currentStep.section)} ${sectionIndex}/${sectionTotal}` : ''}
+                </p>
+                <div className="demo-tour-text-links">
+                  <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
+                    Skip guide
                   </button>
-                )}
-                {(!currentStep.advance || currentStep.advance.type === 'next') && (
-                  <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                    {mode.index >= mode.steps.length - 1 ? 'Finish' : 'Next'}
+                  <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
+                    Exit
                   </button>
-                )}
-                {currentStep.advance && currentStep.advance.type !== 'next' && (
-                  <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                    Continue
-                  </button>
-                )}
+                </div>
               </div>
+              {!yieldToDialog && (
+                <div className="demo-tour-actions">
+                  <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                    Back
+                  </button>
+                  <span className="demo-tour-actions-spacer" />
+                  {showDoIt && (
+                    <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
+                      {currentStep.doItLabel}
+                    </button>
+                  )}
+                  <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
+                    {mode.index >= mode.steps.length - 1
+                      ? 'Finish'
+                      : waitingAdvance
+                        ? 'Continue'
+                        : 'Next'}
+                  </button>
+                </div>
+              )}
+              {yieldToDialog && (
+                <p className="demo-tour-meta">Close the app panel (Cancel), then continue here.</p>
+              )}
             </div>
           </>,
           document.body,

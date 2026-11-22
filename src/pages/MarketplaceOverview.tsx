@@ -228,7 +228,7 @@ export default function MarketplaceOverview() {
         data-overview-mode={sampleMode === 'permits' ? 'sample' : 'demo'}
         data-tour="overview-mode-panel"
       >
-        <div className="overview-mode-banner">
+        <div className="overview-mode-banner" data-tour="overview-mode-banner">
           <div className="overview-mode-banner-copy" role="status">
             <span className="overview-mode-badge">
               {sampleMode === 'permits' ? <FileText size={13} aria-hidden /> : <Play size={13} aria-hidden />}
@@ -247,7 +247,7 @@ export default function MarketplaceOverview() {
           <div role="tabpanel" id="overview-panel-demo" aria-labelledby="overview-tab-demo">
             <section className="transport-readiness" data-tour="overview-next-transport">
               <div className="transport-readiness-copy">
-                <div className="transport-route-heading">
+                <div className="transport-route-heading" data-tour="overview-next-heading">
                   <span className="transport-icon"><Truck size={20} /></span>
                   <div>
                     <span className="market-eyebrow">Next transport · Permit {featuredPermit.permitNumber}</span>
@@ -290,7 +290,7 @@ export default function MarketplaceOverview() {
 
             <div className="market-two-column">
               <section className="market-section" data-tour="overview-upcoming-routes">
-                <div className="market-section-header compact">
+                <div className="market-section-header compact" data-tour="overview-upcoming-heading">
                   <div><span className="market-eyebrow">Dispatch queue</span><h2>Upcoming permitted routes</h2></div>
                   <Link to="/route-checks">New route check <ArrowRight size={16} /></Link>
                 </div>

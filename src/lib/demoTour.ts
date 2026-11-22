@@ -91,7 +91,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'overview',
     title: 'Demo vs sample permit',
     body: 'Demo dashboard is a fixed preview (never saved). Try a sample permit runs a real check on a sample GPX and saves it to your history.',
-    anchor: '[data-tour="overview-mode-panel"]',
+    anchor: '[data-tour="overview-mode-banner"]',
     route: '/',
   },
   {
@@ -99,7 +99,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'overview',
     title: 'Next transport',
     body: 'The featured card shows the next demo departure with a READY, VERIFY, or HOLD pill — the same verdict language used after a live check.',
-    anchor: '[data-tour="overview-next-transport"]',
+    anchor: '[data-tour="overview-next-heading"]',
     route: '/',
     optional: true,
   },
@@ -108,7 +108,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'overview',
     title: 'Upcoming permitted routes',
     body: 'Upcoming routes list the demo set with verdict pills. Open one when you want to review that corridor on the map.',
-    anchor: '[data-tour="overview-upcoming-routes"]',
+    anchor: '[data-tour="overview-upcoming-heading"]',
     route: '/',
     optional: true,
   },
@@ -136,7 +136,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'route-check',
     title: 'Import the permitted route',
     body: 'Upload your VEMAGS GPX, or use a sample permit. Samples are the fastest way to see a full check.',
-    anchor: '[data-tour="route-step-import"]',
+    anchor: '[data-tour="route-import-heading"]',
     route: '/route-checks',
   },
   {
@@ -153,7 +153,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     id: 'route-pick-sample',
     section: 'route-check',
     title: 'Pick a sample permit',
-    body: 'Choose Hamburg → Hannover (A7). It expects VERIFY and prefills vehicle sizes from the permit.',
+    body: 'Choose Hamburg → Hannover (A7). Usually VERIFY — live data can change it. Vehicle sizes are prefilled from the permit.',
     anchor: '[data-tour="route-permit-hamburg-hannover"]',
     route: '/route-checks',
     advance: { type: 'present', selector: '[data-tour="route-step-vehicle"]' },
@@ -165,7 +165,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'route-check',
     title: 'Check the dimensions',
     body: 'Width, height, length, and weight came from the sample permit. Adjust only if the approved vehicle differs, then set departure time.',
-    anchor: '[data-tour="route-step-vehicle"]',
+    anchor: '[data-tour="route-vehicle-heading"]',
     route: '/route-checks',
   },
   {
@@ -194,13 +194,28 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     anchor: '[data-tour="route-verdict-cta"]',
     route: '/route-checks',
     optional: true,
+    advance: {
+      type: 'present',
+      selector: '.action-sheet-overlay[role="dialog"], .dialog-overlay[role="dialog"]',
+    },
+    doItLabel: 'Open the action for me',
+    doItSelector: '[data-tour="route-verdict-cta"]',
+  },
+  {
+    id: 'route-cta-panel',
+    section: 'route-check',
+    title: 'Review and close the panel',
+    body: 'This sheet or dialog lists what you can do next. Pick an option or Cancel to close it — the tour pauses while it is open, then continues here.',
+    anchor: '.action-sheet-overlay[role="dialog"], .dialog-overlay[role="dialog"], .action-sheet, .dialog-content',
+    route: '/route-checks',
+    optional: true,
   },
   {
     id: 'route-evidence',
     section: 'route-check',
     title: 'Evidence on the route',
     body: 'Evidence lists closures, roadworks, and warnings that touched your GPX. Use it to decide what to verify or hold for.',
-    anchor: '[data-tour="route-evidence"]',
+    anchor: '[data-tour="route-evidence-heading"]',
     route: '/route-checks',
     optional: true,
   },
@@ -226,7 +241,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'route-check',
     title: 'Save as a job',
     body: 'Save as job keeps the permit, vehicle, departure, and re-check interval in your account so monitoring can continue while this tab stays open.',
-    anchor: '[data-tour="route-result-actions"]',
+    anchor: '[data-tour="route-save-job-btn"]',
     route: '/route-checks',
     advance: { type: 'present', selector: '[data-tour="route-save-job"]' },
     doItLabel: 'Open save form',
@@ -237,7 +252,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'route-check',
     title: 'Save the job',
     body: 'Set the re-check interval, then Save job. Monitoring only runs while this browser tab is open.',
-    anchor: '[data-tour="route-save-job"]',
+    anchor: '[data-tour="route-save-job-submit"]',
     route: '/route-checks',
     advance: { type: 'click' },
     doItLabel: 'Save job for me',
@@ -294,7 +309,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'alerts',
     title: 'Alerts by route',
     body: 'Alerts group by route. Mark resolved when you have handled a HOLD or VERIFY change. If the list is empty, use Load demo history.',
-    anchor: '[data-tour="activity-alerts"]',
+    anchor: '[data-tour="activity-alerts-heading"]',
     route: '/activity',
   },
   {
@@ -302,7 +317,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'alerts',
     title: 'Check history',
     body: 'Check history by route keeps every completed check for this account — verdict, time, and source.',
-    anchor: '[data-tour="activity-history"]',
+    anchor: '[data-tour="activity-history-heading"]',
     route: '/activity',
   },
 
@@ -507,6 +522,65 @@ export function stepsForSection(section: TourSectionId): TourStepDef[] {
 export function sectionLabel(section: TourSectionId): string {
   return TOUR_SECTIONS.find(item => item.id === section)?.label ?? section
 }
+
+/** Last step id in a section (used to mark completion when that step is left). */
+export function lastStepIdForSection(section: TourSectionId): string | undefined {
+  const steps = stepsForSection(section)
+  return steps[steps.length - 1]?.id
+}
+
+/**
+ * Sections whose last step has been passed when moving from `fromIndex` to `toIndex`
+ * (or finishing when `toIndex >= steps.length`).
+ */
+export function sectionsCompletedByAdvance(
+  steps: readonly TourStepDef[],
+  fromIndex: number,
+  toIndex: number,
+): TourSectionId[] {
+  const completed: TourSectionId[] = []
+  if (fromIndex < 0 || fromIndex >= steps.length) return completed
+  const from = steps[fromIndex]
+  const to = toIndex < steps.length ? steps[toIndex] : null
+  if (!to || to.section !== from.section) {
+    // Leaving the section (or finishing the guide) — mark it done.
+    const sectionSteps = steps.filter(s => s.section === from.section)
+    const lastInRun = sectionSteps[sectionSteps.length - 1]
+    if (lastInRun && from.id === lastInRun.id) {
+      completed.push(from.section)
+    }
+  }
+  return completed
+}
+
+/**
+ * Simulate walking every step of a step list and collect completed sections.
+ * Used by unit tests and to keep Guide menu progress honest during a full tour.
+ */
+export function completedSectionsAfterFullWalk(
+  steps: readonly TourStepDef[] = TOUR_STEPS,
+): TourSectionId[] {
+  const done = new Set<TourSectionId>()
+  for (let i = 0; i < steps.length; i++) {
+    for (const section of sectionsCompletedByAdvance(steps, i, i + 1)) {
+      done.add(section)
+    }
+  }
+  return TOUR_SECTION_ORDER.filter(id => done.has(id))
+}
+
+/** Page/section containers that must not be used as tour anchors (too tall). */
+export const TALL_TOUR_ANCHOR_SELECTORS = [
+  '[data-tour="overview-mode-panel"]',
+  '[data-tour="overview-next-transport"]',
+  '[data-tour="overview-upcoming-routes"]',
+  '[data-tour="route-step-import"]',
+  '[data-tour="route-step-vehicle"]',
+  '[data-tour="route-evidence"]',
+  '[data-tour="route-save-job"]',
+  '[data-tour="activity-alerts"]',
+  '[data-tour="activity-history"]',
+] as const
 
 /** Non-Demo ids used in tests — every APP_USERS id except demo. */
 export function nonDemoUserIds(): string[] {

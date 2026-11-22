@@ -2,13 +2,20 @@
 
 .demo-tour-root {
   --demo-tour-pad: 12px;
-  --demo-tour-sheet-max: 420px;
+  --demo-tour-sheet-max: 320px;
   --demo-tour-z-overlay: 12000;
   --demo-tour-z-tooltip: 12010;
   --demo-tour-z-welcome: 12020;
   --demo-tour-z-menu: 12015;
   --demo-tour-z-launcher: 40;
+  --demo-tour-dim: rgb(0 0 0 / 0.28);
   pointer-events: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .demo-tour-root {
+    --demo-tour-dim: rgb(0 0 0 / 0.5);
+  }
 }
 
 .demo-tour-root * {
@@ -20,7 +27,7 @@
   inset: 0;
   z-index: var(--demo-tour-z-overlay);
   pointer-events: auto;
-  background: color-mix(in srgb, var(--text-primary) 42%, transparent);
+  background: var(--demo-tour-dim);
 }
 
 .demo-tour-spotlight {
@@ -28,9 +35,8 @@
   z-index: calc(var(--demo-tour-z-overlay) + 1);
   pointer-events: none;
   border-radius: 10px;
-  box-shadow:
-    0 0 0 9999px color-mix(in srgb, var(--text-primary) 42%, transparent),
-    0 0 0 2px var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
   background: transparent;
 }
 
@@ -38,13 +44,12 @@
   pointer-events: none;
 }
 
-/* Allow clicks through overlay hole by not covering the target — overlay is full-screen
-   but we use box-shadow cutout; target stays above via raising its stacking in app. */
+/* Dim outside the spotlight; target hole stays undimmed and clickable. */
 .demo-tour-clickshield {
   position: fixed;
-  inset: 0;
   z-index: var(--demo-tour-z-overlay);
   pointer-events: auto;
+  background: var(--demo-tour-dim);
 }
 
 .demo-tour-tooltip {
@@ -67,9 +72,39 @@
   left: 12px !important;
   right: 12px !important;
   width: auto !important;
-  bottom: calc(64px + var(--safe-area-inset-bottom, 0px)) !important;
+  bottom: calc(56px + var(--safe-area-inset-bottom, 0px)) !important;
   top: auto !important;
-  max-height: min(48vh, 360px);
+  max-height: min(36vh, 280px);
+  padding: 12px 14px 10px;
+}
+
+.demo-tour-tooltip.is-sheet-top {
+  left: 12px !important;
+  right: 12px !important;
+  width: auto !important;
+  top: calc(56px + 8px) !important;
+  bottom: auto !important;
+  max-height: min(36vh, 280px);
+  padding: 12px 14px 10px;
+}
+
+.demo-tour-tooltip.is-yielding {
+  z-index: 13000;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(40vh, 240px);
+  opacity: 0.96;
+}
+
+.demo-tour-tooltip.is-sheet .demo-tour-title,
+.demo-tour-tooltip.is-sheet-top .demo-tour-title {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.demo-tour-tooltip.is-sheet .demo-tour-body,
+.demo-tour-tooltip.is-sheet-top .demo-tour-body {
+  font-size: 13px;
+  margin-bottom: 8px;
 }
 
 .demo-tour-eyebrow {
@@ -101,18 +136,61 @@
   color: var(--text-secondary);
 }
 
+.demo-tour-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin: 0 0 12px;
+}
+
 .demo-tour-meta {
-  margin: 0 0 14px;
+  margin: 0;
   font-size: 12px;
   font-weight: 550;
   color: var(--text-tertiary);
 }
 
-.demo-tour-actions {
+.demo-tour-text-links {
   display: flex;
   flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.demo-tour-text-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+  min-height: 44px;
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 550;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.demo-tour-text-link:hover {
+  color: var(--text-primary);
+}
+
+.demo-tour-text-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.demo-tour-actions {
+  display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
 
 .demo-tour-actions-spacer {
@@ -136,6 +214,7 @@
   font-size: 14px;
   font-weight: 560;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .demo-tour-btn:hover {
@@ -145,6 +224,11 @@
 .demo-tour-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+.demo-tour-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .demo-tour-btn.is-primary {
@@ -334,6 +418,17 @@
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--divider);
+}
+
+@media (max-width: 720px) {
+  .demo-tour-actions {
+    flex-wrap: nowrap;
+  }
+
+  .demo-tour-actions .demo-tour-btn {
+    padding: 0 10px;
+    font-size: 13px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

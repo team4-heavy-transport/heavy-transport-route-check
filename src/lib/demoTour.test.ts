@@ -6,14 +6,19 @@ import { DEMO_TOUR_USER_ID, isDemoTourUser } from './demoTourGate.ts'
 import {
   DEMO_TOUR_STORAGE_KEY,
   EMPTY_TOUR_PROGRESS,
+  TALL_TOUR_ANCHOR_SELECTORS,
   TOUR_SECTION_ORDER,
   TOUR_STEPS,
   acknowledgeWelcome,
+  completedSectionsAfterFullWalk,
   dismissWelcome,
+  lastStepIdForSection,
   markSectionComplete,
   nonDemoUserIds,
   readTourProgress,
   resetTourProgress,
+  sectionsCompletedByAdvance,
+  stepsForSection,
   writeTourProgress,
 } from './demoTour.ts'
 
@@ -117,4 +122,66 @@ test('tour CSS is not imported from the global stylesheet', () => {
   assert.doesNotMatch(indexCss, /demoTour\.css/)
   const tourModule = readFileSync(new URL('../components/demoTour/DemoTour.tsx', import.meta.url), 'utf8')
   assert.match(tourModule, /import '\.\/demoTour\.css'/)
+})
+
+test('full tour walk marks every section complete', () => {
+  const done = completedSectionsAfterFullWalk(TOUR_STEPS)
+  assert.deepEqual(done, [...TOUR_SECTION_ORDER])
+
+  const storage = fakeStorage()
+  for (let i = 0; i < TOUR_STEPS.length; i++) {
+    for (const section of sectionsCompletedByAdvance(TOUR_STEPS, i, i + 1)) {
+      markSectionComplete(section, storage)
+    }
+  }
+  const progress = readTourProgress(storage)
+  assert.deepEqual(progress.completedSections, [...TOUR_SECTION_ORDER])
+})
+
+test('leaving the last step of a section marks that section', () => {
+  const overviewLast = lastStepIdForSection('overview')
+  assert.ok(overviewLast)
+  const fromIndex = TOUR_STEPS.findIndex(s => s.id === overviewLast)
+  const toIndex = fromIndex + 1
+  assert.ok(toIndex < TOUR_STEPS.length)
+  assert.notEqual(TOUR_STEPS[fromIndex].section, TOUR_STEPS[toIndex].section)
+  assert.deepEqual(sectionsCompletedByAdvance(TOUR_STEPS, fromIndex, toIndex), ['overview'])
+
+  // Mid-section advance does not mark complete.
+  const firstOverview = TOUR_STEPS.findIndex(s => s.section === 'overview')
+  assert.deepEqual(sectionsCompletedByAdvance(TOUR_STEPS, firstOverview, firstOverview + 1), [])
+
+  // Finishing a single-section guide marks that section.
+  const jobs = stepsForSection('jobs')
+  assert.deepEqual(
+    sectionsCompletedByAdvance(jobs, jobs.length - 1, jobs.length),
+    ['jobs'],
+  )
+})
+
+test('no tour step anchors a known-tall page/section container', () => {
+  const tall = new Set<string>(TALL_TOUR_ANCHOR_SELECTORS)
+  for (const step of TOUR_STEPS) {
+    if (!step.anchor) continue
+    // Exact match against the denylist (compact child selectors are fine).
+    assert.equal(
+      tall.has(step.anchor),
+      false,
+      `${step.id} still anchors tall container ${step.anchor}`,
+    )
+  }
+  // Compact replacements we expect to be in use.
+  const anchors = TOUR_STEPS.map(s => s.anchor).filter(Boolean)
+  assert.ok(anchors.includes('[data-tour="overview-mode-banner"]'))
+  assert.ok(anchors.includes('[data-tour="route-vehicle-heading"]'))
+  assert.ok(anchors.includes('[data-tour="route-evidence-heading"]'))
+  assert.ok(anchors.includes('[data-tour="activity-history-heading"]'))
+})
+
+test('sample permit copy does not hard-promise VERIFY', () => {
+  const pick = TOUR_STEPS.find(s => s.id === 'route-pick-sample')
+  assert.ok(pick)
+  assert.match(pick.body, /Usually VERIFY/i)
+  assert.match(pick.body, /live data can change/i)
+  assert.doesNotMatch(pick.body, /expects VERIFY/i)
 })
