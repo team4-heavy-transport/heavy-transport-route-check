@@ -13,6 +13,7 @@ export default function MobileTabBar() {
   return (
     <nav
       className="mobile-tab-bar"
+      data-tour="nav-mobile"
       style={{
         position: 'fixed',
         bottom: 0,

@@ -56,7 +56,7 @@ export default function MarketplaceActivity() {
       <p className="storage-note activity-storage-note">History is saved to your account.</p>
 
       <div className="route-alert-filters">
-        <div className="activity-filters" role="group" aria-label="Alert severity">
+        <div className="activity-filters" role="group" aria-label="Alert severity" data-tour="activity-severity">
           {filters.map(item => (
             <button type="button" key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>
               {item}
@@ -76,6 +76,7 @@ export default function MarketplaceActivity() {
           <button
             type="button"
             className="btn-text load-demo-btn"
+            data-tour="activity-load-demo"
             onClick={() => {
               const now = new Date()
               const hour = 3600000
@@ -153,7 +154,7 @@ export default function MarketplaceActivity() {
         </div>
       </div>
 
-      <section className="route-alert-log" data-testid="alerts-by-route">
+      <section className="route-alert-log" data-testid="alerts-by-route" data-tour="activity-alerts">
         <header>
           <div><BellRing size={20} /><h2>Alerts by route</h2></div>
           <span>{alertGroups.length} route{alertGroups.length === 1 ? '' : 's'} · {shown.length} alerts</span>
@@ -249,7 +250,7 @@ export default function MarketplaceActivity() {
         )}
       </section>
 
-      <section className="route-alert-log check-history-log" data-testid="check-history-by-route">
+      <section className="route-alert-log check-history-log" data-testid="check-history-by-route" data-tour="activity-history">
         <header>
           <div><History size={20} /><h2>Check history by route</h2></div>
           <span>{historyGroups.length} route{historyGroups.length === 1 ? '' : 's'} · {shownHistory.length} checks</span>

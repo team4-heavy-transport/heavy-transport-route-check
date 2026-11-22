@@ -50,6 +50,7 @@ export default function UserChip({
         <button
           type="button"
           className="user-chip-switch"
+          data-tour="switch-user"
           onClick={onSwitch}
         >
           Switch user
@@ -64,6 +65,7 @@ export default function UserChip({
         type="button"
         className="user-chip is-collapsed has-tooltip"
         data-tooltip={tooltip}
+        data-tour="switch-user"
         aria-label={switchLabel}
         onClick={onSwitch}
       >
@@ -78,6 +80,7 @@ export default function UserChip({
       <button
         type="button"
         className="user-chip is-compact"
+        data-tour="switch-user"
         aria-label={switchLabel}
         title={tooltip}
         onClick={onSwitch}

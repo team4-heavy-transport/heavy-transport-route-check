@@ -993,7 +993,7 @@ export default function RouteIntelligencePolished() {
       <div className="route-polished-content">
         {/* Step 1: Import Route */}
         {step === 'import' && (
-          <div className="route-polished-card">
+          <div className="route-polished-card" data-tour="route-step-import">
             <div className="card-header">
               <FileUp size={24} />
               <div>
@@ -1074,6 +1074,7 @@ export default function RouteIntelligencePolished() {
             <button
               type="button"
               className="btn-secondary"
+              data-tour="route-sample-toggle"
               onClick={() => setShowTestPermits(!showTestPermits)}
             >
               {showTestPermits ? 'Hide' : 'Show'} sample permits
@@ -1118,7 +1119,7 @@ export default function RouteIntelligencePolished() {
 
         {/* Step 2: Vehicle Dimensions */}
         {step === 'vehicle' && !checking && !result && (
-          <div className="route-polished-card">
+          <div className="route-polished-card" data-tour="route-step-vehicle">
             <div className="card-header">
               <Truck size={24} />
               <div>
@@ -1289,6 +1290,7 @@ export default function RouteIntelligencePolished() {
               <button 
                 type="button" 
                 className="btn-primary" 
+                data-tour="route-check-submit"
                 onClick={handleCheckRoute}
                 disabled={!vehicleValid || !departureValid}
               >
@@ -1311,7 +1313,7 @@ export default function RouteIntelligencePolished() {
         {displayed && !checking && currentVerdict && (
           <>
             {/* Verdict Banner */}
-            <div className={`verdict-banner verdict-${currentVerdict.color}`}>
+            <div className={`verdict-banner verdict-${currentVerdict.color}`} data-tour="route-verdict-banner">
               <div className="verdict-icon">
                 <VerdictIcon size={40} />
               </div>
@@ -1346,19 +1348,19 @@ export default function RouteIntelligencePolished() {
               </div>
               {/* Dynamic CTA based on verdict */}
               {displayed.verdict === 'READY' && (
-                <button type="button" className="btn-primary verdict-cta" onClick={() => logDemoAction('Proceed with departure')}>
+                <button type="button" className="btn-primary verdict-cta" data-tour="route-verdict-cta" onClick={() => logDemoAction('Proceed with departure')}>
                   <CheckCircle2 size={16} />
                   Proceed with departure
                 </button>
               )}
               {displayed.verdict === 'VERIFY' && (
-                <button type="button" className="btn-primary verdict-cta" onClick={() => setShowRequestOnSite(true)}>
+                <button type="button" className="btn-primary verdict-cta" data-tour="route-verdict-cta" onClick={() => setShowRequestOnSite(true)}>
                   <AlertTriangle size={16} />
                   Verify before departure
                 </button>
               )}
               {displayed.verdict === 'HOLD' && (
-                <button type="button" className="btn-primary verdict-cta" onClick={() => setShowTakeAction(true)}>
+                <button type="button" className="btn-primary verdict-cta" data-tour="route-verdict-cta" onClick={() => setShowTakeAction(true)}>
                   <CircleX size={16} />
                   Take action
                 </button>
@@ -1381,8 +1383,8 @@ export default function RouteIntelligencePolished() {
               </p>
             ) : null}
 
-            <div className="result-actions">
-              <button type="button" className="btn-primary" onClick={() => setShowSaveJob(true)}>
+            <div className="result-actions" data-tour="route-result-actions">
+              <button type="button" className="btn-primary" data-tour="route-save-job-btn" onClick={() => setShowSaveJob(true)}>
                 <Briefcase size={16} /> Save as job
               </button>
               <button type="button" className="btn-secondary" onClick={() => exportCurrent('pdf')}>
@@ -1394,7 +1396,7 @@ export default function RouteIntelligencePolished() {
             </div>
 
             {showSaveJob && (
-              <div className="job-save-card" data-testid="save-job-form">
+              <div className="job-save-card" data-testid="save-job-form" data-tour="route-save-job">
                 <h3>Save as job</h3>
                 <p>Saves the route file, permit number, vehicle dimensions, and planned departure to your account.</p>
                 <label>
@@ -1421,7 +1423,7 @@ export default function RouteIntelligencePolished() {
                 <div className="form-actions">
                   <button type="button" className="btn-secondary" onClick={() => setShowSaveJob(false)}>Cancel</button>
                   <button type="button" className="btn-secondary" onClick={() => void requestNotifications()}>Allow notifications</button>
-                  <button type="button" className="btn-primary" onClick={handleSaveJob}>Save job</button>
+                  <button type="button" className="btn-primary" data-tour="route-save-job-submit" onClick={handleSaveJob}>Save job</button>
                 </div>
               </div>
             )}
@@ -1485,11 +1487,11 @@ export default function RouteIntelligencePolished() {
                   </div>
                 </div>
 
-                <div className="evidence-section">
+                <div className="evidence-section" data-tour="route-evidence">
                   <h3>
                     Evidence ({displayed.evidence.length})
                   </h3>
-                  <div className="confirm-on-site-bar">
+                  <div className="confirm-on-site-bar" data-tour="route-confirm-bar">
                     {displayed.verdict === 'HOLD' && (
                       <div className="evidence-hold-lock" role="note">
                         <strong>Why HOLD items have no Confirm on site</strong>
@@ -1849,6 +1851,7 @@ function PermitCard({ permit, onSelect }: { permit: TestPermit; onSelect: (id: s
     <button
       type="button"
       className={`test-permit-card kind-${permit.kind}`}
+      data-tour={permit.id === 'hamburg-hannover' ? 'route-permit-hamburg-hannover' : undefined}
       onClick={() => onSelect(permit.id)}
     >
       <MapPin size={20} />
