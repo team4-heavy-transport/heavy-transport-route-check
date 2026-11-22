@@ -5,6 +5,7 @@ import {
   TALL_VIEWPORT_RATIO,
   clampSpotlightRect,
   computeScrollDelta,
+  isUsableSpotlightRect,
   placeTooltip,
   targetFitsAboveSheet,
   verdictCtaBody,
@@ -56,6 +57,12 @@ test('clampSpotlightRect keeps normal targets intact (aside from pad clamp)', ()
   const clamped = clampSpotlightRect(small, viewport)
   assert.equal(clamped.width, 240)
   assert.equal(clamped.height, 80)
+})
+
+test('isUsableSpotlightRect rejects closing-dialog ghost rects', () => {
+  assert.equal(isUsableSpotlightRect({ top: 0, left: 0, width: 12, height: 12 }), false)
+  assert.equal(isUsableSpotlightRect({ top: 100, left: 50, width: 19, height: 40 }), false)
+  assert.equal(isUsableSpotlightRect({ top: 100, left: 50, width: 240, height: 80 }), true)
 })
 
 test('targetFitsAboveSheet detects when the sheet would cover the target', () => {

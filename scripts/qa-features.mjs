@@ -846,6 +846,64 @@ async function main() {
     )
   }
 
+  // Demo corridor tour: tip must win hit-testing over the live-event panel / map stack.
+  const corridorTourTitles = [
+    'Scope and basemap',
+    'Search road or place',
+    'Closures, roadworks, warnings',
+    'Event list and map',
+    'Layers and refresh',
+  ]
+  async function assertCorridorTourTipOnTop(width, height) {
+    await page.setViewportSize({ width, height })
+    await page.goto(base + '/map-explorer', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    await page.getByRole('heading', { name: 'Corridor monitor' }).waitFor({ timeout: 20000 })
+    await page.locator('[data-testid="corridor-map"]').waitFor({ timeout: 25000 })
+    await page.getByRole('button', { name: 'Guide' }).click()
+    await page.getByRole('dialog', { name: 'Guide menu' }).waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: 'Corridor monitor' }).click()
+    for (let i = 0; i < corridorTourTitles.length; i++) {
+      const title = corridorTourTitles[i]
+      const tip = page.locator('.demo-tour-tooltip')
+      await tip.waitFor({ state: 'visible', timeout: 20000 })
+      await tip.locator('.demo-tour-title', { hasText: title }).waitFor({ timeout: 15000 })
+      // Let spotlight/tip settle after navigation + measure.
+      await page.waitForTimeout(400)
+      const hit = await page.evaluate(() => {
+        const el = document.querySelector('.demo-tour-tooltip')
+        if (!el) return { ok: false, reason: 'missing-tip' }
+        const r = el.getBoundingClientRect()
+        const cx = r.left + r.width / 2
+        const cy = r.top + r.height / 2
+        const top = document.elementFromPoint(cx, cy)
+        const inside = Boolean(top && (top === el || el.contains(top)))
+        return {
+          ok: inside,
+          title: el.querySelector('.demo-tour-title')?.textContent?.trim() || '',
+          hitTag: top ? top.tagName : null,
+          hitClass: top && 'className' in top ? String(top.className).slice(0, 120) : null,
+          rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+          rootParent: document.querySelector('[data-demo-tour-root]')?.parentElement?.tagName || null,
+        }
+      })
+      record(
+        `Demo corridor tour tip on top "${title}" at ${width}×${height}`,
+        Boolean(hit.ok) && hit.title === title && hit.rootParent === 'BODY',
+        JSON.stringify(hit),
+      )
+      const primary = tip.locator('.demo-tour-btn.is-primary')
+      if (i < corridorTourTitles.length - 1) {
+        await primary.click({ timeout: 10000 })
+      } else {
+        await tip.getByRole('button', { name: 'Finish' }).click({ timeout: 10000 })
+      }
+    }
+  }
+  await assertCorridorTourTipOnTop(1440, 900)
+  await assertCorridorTourTipOnTop(390, 844)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
   // Mobile: corridor legend must fully contain Flowing / Pressure / Restricted.
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(base + '/map-explorer', { waitUntil: 'domcontentloaded', timeout: 60000 })

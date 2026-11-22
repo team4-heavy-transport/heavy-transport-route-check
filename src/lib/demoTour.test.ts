@@ -124,6 +124,16 @@ test('tour CSS is not imported from the global stylesheet', () => {
   assert.match(tourModule, /import '\.\/demoTour\.css'/)
 })
 
+test('tour root portals to body with a top-most stacking layer', () => {
+  const tourModule = readFileSync(new URL('../components/demoTour/DemoTour.tsx', import.meta.url), 'utf8')
+  assert.match(tourModule, /createPortal\(\s*<div className="demo-tour-root"/)
+  assert.match(tourModule, /document\.body/)
+  const tourCss = readFileSync(new URL('../components/demoTour/demoTour.css', import.meta.url), 'utf8')
+  assert.match(tourCss, /z-index:\s*2147483000/)
+  assert.match(tourCss, /--demo-tour-z-overlay:\s*2147483000/)
+  assert.match(tourCss, /--demo-tour-z-tooltip:\s*2147483010/)
+})
+
 test('full tour walk marks every section complete', () => {
   const done = completedSectionsAfterFullWalk(TOUR_STEPS)
   assert.deepEqual(done, [...TOUR_SECTION_ORDER])

@@ -1,14 +1,21 @@
-/* Demo-only guided tour — loaded only via the lazy DemoTour chunk. */
+/* Demo-only guided tour — loaded only via the lazy DemoTour chunk.
+   Portaled to document.body. Vars live on this root so overlay/tip inherit them
+   (nested body portals previously left z-index vars unresolved, so tips painted
+   under .live-event-panel's grid stacking context). */
 
 .demo-tour-root {
   --demo-tour-pad: 12px;
   --demo-tour-sheet-max: 320px;
-  --demo-tour-z-overlay: 12000;
-  --demo-tour-z-tooltip: 12010;
-  --demo-tour-z-welcome: 12020;
-  --demo-tour-z-menu: 12015;
+  /* Beat MapLibre / live-map stacking without touching map CSS. */
+  --demo-tour-z-overlay: 2147483000;
+  --demo-tour-z-tooltip: 2147483010;
+  --demo-tour-z-welcome: 2147483020;
+  --demo-tour-z-menu: 2147483015;
   --demo-tour-z-launcher: 40;
   --demo-tour-dim: rgb(0 0 0 / 0.28);
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
   pointer-events: none;
 }
 
@@ -89,7 +96,7 @@
 }
 
 .demo-tour-tooltip.is-yielding {
-  z-index: 13000;
+  z-index: var(--demo-tour-z-tooltip);
   max-width: min(320px, calc(100vw - 24px));
   max-height: min(40vh, 240px);
   opacity: 0.96;

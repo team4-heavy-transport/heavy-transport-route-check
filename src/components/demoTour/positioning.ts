@@ -59,6 +59,11 @@ export function clampSpotlightRect(
   return { top, left, width, height }
 }
 
+/** True when a clamped spotlight is large enough to be a real target (not a closing dialog ghost). */
+export function isUsableSpotlightRect(rect: Rect): boolean {
+  return rect.width >= 20 && rect.height >= 20
+}
+
 export function measureTooltipSize(el: HTMLElement | null): { width: number; height: number } {
   if (!el) return { width: 360, height: 200 }
   const rect = el.getBoundingClientRect()

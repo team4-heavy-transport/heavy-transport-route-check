@@ -33,6 +33,7 @@ import {
   expandRect,
   isAppDialogOpen,
   isNarrowViewport,
+  isUsableSpotlightRect,
   measureTooltipSize,
   placeTooltip,
   prefersReducedMotion,
@@ -293,8 +294,9 @@ export default function DemoTour() {
         if (!cancelled) goToIndex(stepIndex + 1)
         return
       }
-      // READY has no action sheet — skip the panel follow-up.
-      if (step.id === 'route-cta-panel' && !isAppDialogOpen() && readVerdictFromDom() === 'READY') {
+      // Panel step is only meaningful with an open sheet/dialog — skip ghosts
+      // (READY never opens one; user Cancel/"Close it and continue" already closed it).
+      if (step.id === 'route-cta-panel' && !isAppDialogOpen()) {
         if (!cancelled && skipGuardRef.current !== step.id) {
           skipGuardRef.current = step.id
           goToIndex(stepIndex + 1)
@@ -366,13 +368,19 @@ export default function DemoTour() {
       if (anchorEl) {
         const raw = expandRect(anchorEl.getBoundingClientRect())
         const rect = clampSpotlightRect(raw, viewport)
-        setSpot(rect)
+        // Closing sheets can leave a ~12×12 ghost rect — never spotlight that.
+        if (!isUsableSpotlightRect(rect)) {
+          setSpot(null)
+          setTipPos(placeTooltip(null, tipSize, viewport))
+        } else {
+          setSpot(rect)
 
-        let preferSheetTop = false
-        if (narrow && sheetH > 0) {
-          preferSheetTop = !targetFitsAboveSheet(rect, viewport, sheetH)
+          let preferSheetTop = false
+          if (narrow && sheetH > 0) {
+            preferSheetTop = !targetFitsAboveSheet(rect, viewport, sheetH)
+          }
+          setTipPos(placeTooltip(rect, tipSize, viewport, { sheetHeight: sheetH, preferSheetTop }))
         }
-        setTipPos(placeTooltip(rect, tipSize, viewport, { sheetHeight: sheetH, preferSheetTop }))
       } else {
         setSpot(null)
         setTipPos(placeTooltip(null, tipSize, viewport))
@@ -596,7 +604,8 @@ export default function DemoTour() {
   const tipBody = dynamicBody ?? currentStep?.body ?? ''
   const yieldToDialog = appDialogOpen && currentStep?.id === 'route-cta-panel'
 
-  return (
+  // Entire tour chrome portals to body so z-index vars apply (not under main/map stacking).
+  return createPortal(
     <div className="demo-tour-root" data-demo-tour-root="">
       <div className="demo-tour-sr-live" aria-live="polite">
         {liveMessage}
@@ -604,226 +613,220 @@ export default function DemoTour() {
 
       {guideSlot
         ? createPortal(launcher, guideSlot)
-        : createPortal(
+        : (
             <div style={{ position: 'fixed', top: 6, right: 120, zIndex: 40, pointerEvents: 'auto' }}>
               {launcher}
-            </div>,
-            document.body,
+            </div>
           )}
 
-      {mode.kind === 'welcome' &&
-        createPortal(
-          <div className="demo-tour-welcome-backdrop" role="presentation">
-            <div
-              ref={welcomeRef}
-              className="demo-tour-welcome"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={titleId}
-              aria-describedby={bodyId}
-              tabIndex={-1}
-            >
-              <span className="demo-tour-eyebrow">Demo guide</span>
-              <h2 id={titleId} className="demo-tour-title">
-                Walk through a live route check
-              </h2>
-              <p id={bodyId} className="demo-tour-body">
-                This app checks whether a permitted heavy-transport route is usable against live Autobahn conditions.
-                The guide covers Overview, a full Route check, Jobs, Alerts, Corridor monitor, Settings, and Switch user — Demo account only.
+      {mode.kind === 'welcome' && (
+        <div className="demo-tour-welcome-backdrop" role="presentation">
+          <div
+            ref={welcomeRef}
+            className="demo-tour-welcome"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={bodyId}
+            tabIndex={-1}
+          >
+            <span className="demo-tour-eyebrow">Demo guide</span>
+            <h2 id={titleId} className="demo-tour-title">
+              Walk through a live route check
+            </h2>
+            <p id={bodyId} className="demo-tour-body">
+              This app checks whether a permitted heavy-transport route is usable against live Autobahn conditions.
+              The guide covers Overview, a full Route check, Jobs, Alerts, Corridor monitor, Settings, and Switch user — Demo account only.
+            </p>
+            <div className="demo-tour-actions">
+              <button type="button" className="demo-tour-btn is-ghost" onClick={() => { persist(dismissWelcome()); closeTour() }}>
+                Not now
+              </button>
+              <span className="demo-tour-actions-spacer" />
+              <button type="button" className="demo-tour-btn is-primary" onClick={startFullTour}>
+                Start the tour
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mode.kind === 'menu' && (
+        <>
+          <button type="button" className="demo-tour-menu-backdrop" aria-label="Close guide menu" onClick={() => setMode({ kind: 'idle' })} />
+          <div
+            ref={menuRef}
+            className="demo-tour-menu"
+            role="dialog"
+            aria-label="Guide menu"
+            tabIndex={-1}
+            style={{ top: menuPos.top, left: menuPos.left }}
+          >
+            <h2 className="demo-tour-menu-title">Guides</h2>
+            <ul className="demo-tour-menu-list">
+              {TOUR_SECTIONS.map(section => {
+                const done = progress.completedSections.includes(section.id)
+                return (
+                  <li key={section.id}>
+                    <button type="button" className="demo-tour-menu-item" onClick={() => startSection(section.id)}>
+                      {section.label}
+                      <span className={`demo-tour-menu-status${done ? ' is-done' : ''}`}>
+                        {done ? 'Done' : 'Not started'}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            <div className="demo-tour-menu-footer">
+              <button
+                type="button"
+                className="demo-tour-btn"
+                style={{ width: '100%' }}
+                onClick={() => {
+                  persist(resetTourProgress())
+                  startFullTour()
+                }}
+              >
+                Restart full tour
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {mode.kind === 'tour' && currentStep && (
+        <>
+          {/* Yield shields/dim while an app dialog is open so Esc/focus stay with the app. */}
+          {!yieldToDialog && (
+            <>
+              {!spot && <div className="demo-tour-overlay" aria-hidden="true" />}
+              {spot && (
+                <>
+                  <div
+                    className="demo-tour-clickshield"
+                    style={{ top: 0, left: 0, width: '100%', height: Math.max(0, spot.top) }}
+                    aria-hidden="true"
+                  />
+                  <div
+                    className="demo-tour-clickshield"
+                    style={{
+                      top: spot.top + spot.height,
+                      left: 0,
+                      width: '100%',
+                      height: Math.max(0, window.innerHeight - spot.top - spot.height),
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div
+                    className="demo-tour-clickshield"
+                    style={{ top: spot.top, left: 0, width: Math.max(0, spot.left), height: spot.height }}
+                    aria-hidden="true"
+                  />
+                  <div
+                    className="demo-tour-clickshield"
+                    style={{
+                      top: spot.top,
+                      left: spot.left + spot.width,
+                      width: Math.max(0, window.innerWidth - spot.left - spot.width),
+                      height: spot.height,
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div
+                    className="demo-tour-spotlight"
+                    style={{
+                      top: spot.top,
+                      left: spot.left,
+                      width: spot.width,
+                      height: spot.height,
+                    }}
+                    aria-hidden="true"
+                  />
+                </>
+              )}
+            </>
+          )}
+
+          <div
+            ref={tooltipRef}
+            className={[
+              'demo-tour-tooltip',
+              tipPos.placement === 'sheet' || (isNarrowViewport() && tipPos.placement !== 'sheet-top')
+                ? ' is-sheet'
+                : '',
+              tipPos.placement === 'sheet-top' ? ' is-sheet-top' : '',
+              yieldToDialog ? ' is-yielding' : '',
+            ].join('')}
+            role="dialog"
+            aria-modal={yieldToDialog ? 'false' : 'true'}
+            aria-labelledby={titleId}
+            aria-describedby={bodyId}
+            tabIndex={-1}
+            data-tour-yield={yieldToDialog ? 'app-dialog' : undefined}
+            style={
+              tipPos.placement === 'sheet' || tipPos.placement === 'sheet-top' || isNarrowViewport()
+                ? undefined
+                : yieldToDialog
+                  ? { top: 12, left: 12 }
+                  : { top: tipPos.top, left: tipPos.left }
+            }
+          >
+            <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
+            <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
+            <p id={bodyId} className="demo-tour-body">{tipBody}</p>
+            <div className="demo-tour-meta-row">
+              <p className="demo-tour-meta">
+                Step {mode.index + 1} of {mode.steps.length}
+                {sectionTotal > 0 ? ` · ${sectionLabel(currentStep.section)} ${sectionIndex}/${sectionTotal}` : ''}
               </p>
+              <div className="demo-tour-text-links">
+                <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
+                  Skip guide
+                </button>
+                <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
+                  Exit
+                </button>
+              </div>
+            </div>
+            {yieldToDialog ? (
               <div className="demo-tour-actions">
-                <button type="button" className="demo-tour-btn is-ghost" onClick={() => { persist(dismissWelcome()); closeTour() }}>
-                  Not now
+                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                  Back
                 </button>
                 <span className="demo-tour-actions-spacer" />
-                <button type="button" className="demo-tour-btn is-primary" onClick={startFullTour}>
-                  Start the tour
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
-
-      {mode.kind === 'menu' &&
-        createPortal(
-          <>
-            <button type="button" className="demo-tour-menu-backdrop" aria-label="Close guide menu" onClick={() => setMode({ kind: 'idle' })} />
-            <div
-              ref={menuRef}
-              className="demo-tour-menu"
-              role="dialog"
-              aria-label="Guide menu"
-              tabIndex={-1}
-              style={{ top: menuPos.top, left: menuPos.left }}
-            >
-              <h2 className="demo-tour-menu-title">Guides</h2>
-              <ul className="demo-tour-menu-list">
-                {TOUR_SECTIONS.map(section => {
-                  const done = progress.completedSections.includes(section.id)
-                  return (
-                    <li key={section.id}>
-                      <button type="button" className="demo-tour-menu-item" onClick={() => startSection(section.id)}>
-                        {section.label}
-                        <span className={`demo-tour-menu-status${done ? ' is-done' : ''}`}>
-                          {done ? 'Done' : 'Not started'}
-                        </span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-              <div className="demo-tour-menu-footer">
                 <button
                   type="button"
-                  className="demo-tour-btn"
-                  style={{ width: '100%' }}
-                  onClick={() => {
-                    persist(resetTourProgress())
-                    startFullTour()
-                  }}
+                  className="demo-tour-btn is-primary"
+                  onClick={onClosePanelAndContinue}
                 >
-                  Restart full tour
+                  Close it and continue
                 </button>
               </div>
-            </div>
-          </>,
-          document.body,
-        )}
-
-      {mode.kind === 'tour' && currentStep &&
-        createPortal(
-          <>
-            {/* Yield shields/dim while an app dialog is open so Esc/focus stay with the app. */}
-            {!yieldToDialog && (
-              <>
-                {!spot && <div className="demo-tour-overlay" aria-hidden="true" />}
-                {spot && (
-                  <>
-                    <div
-                      className="demo-tour-clickshield"
-                      style={{ top: 0, left: 0, width: '100%', height: Math.max(0, spot.top) }}
-                      aria-hidden="true"
-                    />
-                    <div
-                      className="demo-tour-clickshield"
-                      style={{
-                        top: spot.top + spot.height,
-                        left: 0,
-                        width: '100%',
-                        height: Math.max(0, window.innerHeight - spot.top - spot.height),
-                      }}
-                      aria-hidden="true"
-                    />
-                    <div
-                      className="demo-tour-clickshield"
-                      style={{ top: spot.top, left: 0, width: Math.max(0, spot.left), height: spot.height }}
-                      aria-hidden="true"
-                    />
-                    <div
-                      className="demo-tour-clickshield"
-                      style={{
-                        top: spot.top,
-                        left: spot.left + spot.width,
-                        width: Math.max(0, window.innerWidth - spot.left - spot.width),
-                        height: spot.height,
-                      }}
-                      aria-hidden="true"
-                    />
-                    <div
-                      className="demo-tour-spotlight"
-                      style={{
-                        top: spot.top,
-                        left: spot.left,
-                        width: spot.width,
-                        height: spot.height,
-                      }}
-                      aria-hidden="true"
-                    />
-                  </>
+            ) : (
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                  Back
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                {showDoIt && (
+                  <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
+                    {currentStep.doItLabel}
+                  </button>
                 )}
-              </>
-            )}
-
-            <div
-              ref={tooltipRef}
-              className={[
-                'demo-tour-tooltip',
-                tipPos.placement === 'sheet' || (isNarrowViewport() && tipPos.placement !== 'sheet-top')
-                  ? ' is-sheet'
-                  : '',
-                tipPos.placement === 'sheet-top' ? ' is-sheet-top' : '',
-                yieldToDialog ? ' is-yielding' : '',
-              ].join('')}
-              role="dialog"
-              aria-modal={yieldToDialog ? 'false' : 'true'}
-              aria-labelledby={titleId}
-              aria-describedby={bodyId}
-              tabIndex={-1}
-              data-tour-yield={yieldToDialog ? 'app-dialog' : undefined}
-              style={
-                tipPos.placement === 'sheet' || tipPos.placement === 'sheet-top' || isNarrowViewport()
-                  ? undefined
-                  : yieldToDialog
-                    ? { top: 12, left: 12 }
-                    : { top: tipPos.top, left: tipPos.left }
-              }
-            >
-              <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
-              <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
-              <p id={bodyId} className="demo-tour-body">{tipBody}</p>
-              <div className="demo-tour-meta-row">
-                <p className="demo-tour-meta">
-                  Step {mode.index + 1} of {mode.steps.length}
-                  {sectionTotal > 0 ? ` · ${sectionLabel(currentStep.section)} ${sectionIndex}/${sectionTotal}` : ''}
-                </p>
-                <div className="demo-tour-text-links">
-                  <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
-                    Skip guide
-                  </button>
-                  <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
-                    Exit
-                  </button>
-                </div>
+                <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
+                  {mode.index >= mode.steps.length - 1
+                    ? 'Finish'
+                    : waitingAdvance
+                      ? 'Continue'
+                      : 'Next'}
+                </button>
               </div>
-              {yieldToDialog ? (
-                <div className="demo-tour-actions">
-                  <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                    Back
-                  </button>
-                  <span className="demo-tour-actions-spacer" />
-                  <button
-                    type="button"
-                    className="demo-tour-btn is-primary"
-                    onClick={onClosePanelAndContinue}
-                  >
-                    Close it and continue
-                  </button>
-                </div>
-              ) : (
-                <div className="demo-tour-actions">
-                  <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                    Back
-                  </button>
-                  <span className="demo-tour-actions-spacer" />
-                  {showDoIt && (
-                    <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
-                      {currentStep.doItLabel}
-                    </button>
-                  )}
-                  <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                    {mode.index >= mode.steps.length - 1
-                      ? 'Finish'
-                      : waitingAdvance
-                        ? 'Continue'
-                        : 'Next'}
-                  </button>
-                </div>
-              )}
-            </div>
-          </>,
-          document.body,
-        )}
-    </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>,
+    document.body,
   )
 }
