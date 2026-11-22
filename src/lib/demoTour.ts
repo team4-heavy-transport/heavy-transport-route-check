@@ -1,14 +1,10 @@
 import { APP_USERS } from './users'
+import { DEMO_TOUR_USER_ID } from './demoTourGate'
 
-/** Only this account sees the guided tour. */
-export const DEMO_TOUR_USER_ID = 'demo'
+export { DEMO_TOUR_USER_ID, isDemoTourUser } from './demoTourGate'
 
 /** localStorage key — Demo-scoped; never written to /api/state. */
 export const DEMO_TOUR_STORAGE_KEY = 'htr-demo-tour:v1'
-
-export function isDemoTourUser(id: string | null | undefined): boolean {
-  return id === DEMO_TOUR_USER_ID
-}
 
 export const TOUR_SECTION_ORDER = [
   'overview',

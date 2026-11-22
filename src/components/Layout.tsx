@@ -14,7 +14,7 @@ import { useJobs } from '../context/JobsContext'
 import { useOrgSettings } from '../context/OrgSettingsContext'
 import { flushPendingSaves } from '../lib/browserStore'
 import { SEARCH_EMPTY_HELP, searchAppData } from '../lib/appSearch'
-import { isDemoTourUser } from '../lib/demoTour'
+import { isDemoTourUser } from '../lib/demoTourGate'
 import { formatBerlinDateTime } from '../lib/formatTime'
 import {
   DRAWER_NAV_MAX_WIDTH_PX,
@@ -508,7 +508,7 @@ export default function Layout() {
               )}
             </div>
 
-            <span data-tour="demo-guide-anchor" />
+            {showDemoTour && <span data-tour="demo-guide-anchor" />}
             <div style={{ position: 'relative' }}>
               <button
                 className="topbar-help hover:!bg-black/[0.06] hover:!text-[var(--text-primary)]"

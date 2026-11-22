@@ -141,8 +141,8 @@ export default function MarketplaceOverview() {
 
   return (
     <div className="market-page transport-overview">
-      <div data-tour="overview-hero">
       <PageHeader
+        tourId="overview-hero"
         eyebrow="Heavy transport operations"
         title="Know whether the permitted route is usable"
         description="Check the exact approved route against current roadworks, closures, and trusted on-site reports before the transport departs."
@@ -153,7 +153,6 @@ export default function MarketplaceOverview() {
           </>
         }
       />
-      </div>
 
       {jobs.length > 0 && (
         <section className="saved-checks-section" aria-label="Saved jobs">

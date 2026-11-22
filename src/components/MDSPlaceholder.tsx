@@ -3,11 +3,13 @@ import { Link } from 'lucide-react'
 interface MDSPlaceholderProps {
   feature: string
   description?: string
+  /** Optional tour anchor — attribute-only; undefined omits the attr. */
+  tourId?: string
 }
 
-export default function MDSPlaceholder({ feature, description }: MDSPlaceholderProps) {
+export default function MDSPlaceholder({ feature, description, tourId }: MDSPlaceholderProps) {
   return (
-    <div className="mds-placeholder">
+    <div className="mds-placeholder" data-tour={tourId}>
       <div className="mds-placeholder-icon">
         <Link size={32} />
       </div>

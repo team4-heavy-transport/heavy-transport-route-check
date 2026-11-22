@@ -2,15 +2,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { APP_USERS } from './users.ts'
+import { DEMO_TOUR_USER_ID, isDemoTourUser } from './demoTourGate.ts'
 import {
   DEMO_TOUR_STORAGE_KEY,
-  DEMO_TOUR_USER_ID,
   EMPTY_TOUR_PROGRESS,
   TOUR_SECTION_ORDER,
   TOUR_STEPS,
   acknowledgeWelcome,
   dismissWelcome,
-  isDemoTourUser,
   markSectionComplete,
   nonDemoUserIds,
   readTourProgress,
@@ -105,9 +104,12 @@ test('progress helpers read/write only the Demo-scoped key', () => {
 test('Layout gates DemoTour behind isDemoTourUser and lazy import', () => {
   const source = readFileSync(new URL('../components/Layout.tsx', import.meta.url), 'utf8')
   assert.match(source, /lazy\(\(\)\s*=>\s*import\('\.\/demoTour\/DemoTour'\)\)/)
+  assert.match(source, /from ['"]\.\.\/lib\/demoTourGate['"]/)
   assert.match(source, /isDemoTourUser\(user\?\.id\)/)
   assert.match(source, /showDemoTour &&/)
   assert.match(source, /<DemoTour\s*\/>/)
+  // Gate only — step defs in lib/demoTour must stay out of the main chunk.
+  assert.doesNotMatch(source, /from ['"]\.\.\/lib\/demoTour['"]/)
 })
 
 test('tour CSS is not imported from the global stylesheet', () => {
