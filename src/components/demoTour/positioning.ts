@@ -160,42 +160,125 @@ export function targetFitsAboveSheet(
   return target.height <= available
 }
 
+const SCROLL_MARGIN = 12
+
+/**
+ * Pure scroll math: how much to change scrollTop so the target's top lands in the
+ * visible band between headerBottom+margin and sheetTop−margin (viewport coords).
+ * Positive delta → scroll content up (increase scrollTop).
+ */
+export function computeScrollDelta(
+  targetRect: { top: number; height: number },
+  containerRect: { top: number; height: number },
+  headerBottom: number,
+  sheetTop: number,
+  margin = SCROLL_MARGIN,
+): number {
+  const visibleTop = Math.max(headerBottom + margin, containerRect.top + margin)
+  const visibleBottom = Math.min(sheetTop - margin, containerRect.top + containerRect.height - margin)
+  const bandH = visibleBottom - visibleTop
+  if (bandH <= 0) {
+    return targetRect.top - (headerBottom + margin)
+  }
+
+  const targetBottom = targetRect.top + targetRect.height
+
+  // Tall target: pin its top just under the header band.
+  if (targetRect.height > bandH) {
+    return targetRect.top - visibleTop
+  }
+
+  // Fully inside the band — no scroll.
+  if (targetRect.top >= visibleTop && targetBottom <= visibleBottom) {
+    return 0
+  }
+
+  // Above the band: bring top down to visibleTop.
+  if (targetRect.top < visibleTop) {
+    return targetRect.top - visibleTop
+  }
+
+  // Below the band: place top at visibleTop (fits by definition when height ≤ bandH).
+  return targetRect.top - visibleTop
+}
+
+/** Nearest ancestor that actually scrolls (overflow-y auto/scroll and overflow content). */
+export function findScrollableAncestor(el: Element): HTMLElement | null {
+  let parent = el.parentElement
+  while (parent) {
+    const style = getComputedStyle(parent)
+    const overflowY = style.overflowY
+    const scrollableY =
+      overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay'
+    if (scrollableY && parent.scrollHeight > parent.clientHeight + 1) {
+      return parent
+    }
+    parent = parent.parentElement
+  }
+  return null
+}
+
+/** Wait two animation frames so layout/scroll settle before re-measure. */
+export function afterScrollFrames(): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'undefined') {
+      resolve()
+      return
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
+
 /**
  * Scroll so the target sits in the visible band (above a bottom sheet on mobile).
- * Uses window scroll (and nearest scroll parent) rather than block:'center'.
+ * Prefers the nearest scrollable ancestor (e.g. `.app-page-host`); falls back to window.
  */
 export function scrollTargetIntoView(
   el: Element,
-  opts: { sheetHeight?: number; headerHeight?: number } = {},
+  opts: {
+    sheetHeight?: number
+    headerHeight?: number
+    /** Absolute viewport Y of the sheet top when known (preferred over sheetHeight). */
+    sheetTop?: number
+  } = {},
 ): void {
   const behavior = prefersReducedMotion() ? 'instant' : 'smooth'
-  const headerH = opts.headerHeight ?? HEADER_H
-  const sheetH = opts.sheetHeight ?? 0
-  const narrow = typeof window !== 'undefined' && isNarrowViewport(window.innerWidth)
+  const headerBottom = opts.headerHeight ?? HEADER_H
+  const viewportH = typeof window !== 'undefined' ? window.innerHeight : 800
+  const sheetTop =
+    opts.sheetTop ??
+    (opts.sheetHeight && opts.sheetHeight > 0 ? viewportH - opts.sheetHeight : viewportH)
 
   try {
-    if (narrow && sheetH > 0) {
-      const rect = el.getBoundingClientRect()
-      const visibleBottom = window.innerHeight - sheetH - PAD
-      const visibleTop = headerH + PAD
-      const visibleMid = (visibleTop + visibleBottom) / 2
-      const targetMid = rect.top + rect.height / 2
-      // Prefer aligning the target into the upper visible band.
-      let delta: number
-      if (rect.height > visibleBottom - visibleTop) {
-        // Tall target: pin its top just under the header.
-        delta = rect.top - visibleTop
-      } else if (rect.bottom > visibleBottom || rect.top < visibleTop) {
-        delta = targetMid - visibleMid
-      } else {
-        delta = 0
-      }
+    const targetRect = el.getBoundingClientRect()
+    const scrollParent = findScrollableAncestor(el)
+
+    if (scrollParent) {
+      const containerRect = scrollParent.getBoundingClientRect()
+      const delta = computeScrollDelta(targetRect, containerRect, headerBottom, sheetTop)
       if (Math.abs(delta) > 2) {
-        window.scrollBy({ top: delta, behavior: behavior as ScrollBehavior })
+        const maxScroll = scrollParent.scrollHeight - scrollParent.clientHeight
+        const next = clamp(scrollParent.scrollTop + delta, 0, Math.max(0, maxScroll))
+        if (typeof scrollParent.scrollTo === 'function') {
+          scrollParent.scrollTo({ top: next, behavior: behavior as ScrollBehavior })
+        } else {
+          scrollParent.scrollTop = next
+        }
       }
       return
     }
 
+    // Fall back to window / document scrolling element.
+    const containerRect = { top: 0, height: viewportH }
+    const delta = computeScrollDelta(targetRect, containerRect, headerBottom, sheetTop)
+    if (Math.abs(delta) > 2) {
+      window.scrollBy({ top: delta, behavior: behavior as ScrollBehavior })
+      return
+    }
+
+    const narrow = isNarrowViewport(window.innerWidth)
     el.scrollIntoView({
       block: narrow ? 'start' : 'center',
       inline: 'nearest',
@@ -258,6 +341,22 @@ export function clickSelector(selector: string): boolean {
 /** App dialogs/sheets that should take focus over the tour. */
 export const APP_DIALOG_SELECTOR =
   '.action-sheet-overlay[role="dialog"], .dialog-overlay[role="dialog"]'
+
+/** Click Cancel / close inside the open app dialog or sheet. */
+export function clickAppDialogDismiss(root: ParentNode = document): boolean {
+  const dialog = root.querySelector(APP_DIALOG_SELECTOR)
+  if (!dialog) return false
+  const buttons = Array.from(dialog.querySelectorAll('button'))
+  const cancel =
+    buttons.find(btn => /^\s*cancel\s*$/i.test(btn.textContent || '')) ||
+    buttons.find(btn => /cancel/i.test(btn.textContent || '')) ||
+    dialog.querySelector('button.btn-secondary')
+  if (cancel instanceof HTMLElement) {
+    cancel.click()
+    return true
+  }
+  return false
+}
 
 export function isAppDialogOpen(root: ParentNode = document): boolean {
   return Boolean(root.querySelector(APP_DIALOG_SELECTOR))

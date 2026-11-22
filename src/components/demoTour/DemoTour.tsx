@@ -26,7 +26,8 @@ import {
   type TourStepDef,
 } from '../../lib/demoTour'
 import {
-  APP_DIALOG_SELECTOR,
+  afterScrollFrames,
+  clickAppDialogDismiss,
   clickSelector,
   clampSpotlightRect,
   expandRect,
@@ -81,6 +82,7 @@ export default function DemoTour() {
   const [dynamicBody, setDynamicBody] = useState<string | null>(null)
   const waitingRef = useRef(false)
   const skipGuardRef = useRef<string | null>(null)
+  const panelSeenOpenRef = useRef(false)
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -324,16 +326,22 @@ export default function DemoTour() {
       skipGuardRef.current = null
 
       const tipEl = tooltipRef.current
-      const sheetH =
-        tipEl && isNarrowViewport()
-          ? tipEl.getBoundingClientRect().height || SHEET_FALLBACK_H
-          : isNarrowViewport()
-            ? SHEET_FALLBACK_H
-            : 0
-      scrollTargetIntoView(found, { sheetHeight: sheetH })
-      // Re-measure after scroll settles.
-      const settleMs = prefersReducedMotion() ? 40 : 320
-      await new Promise(r => setTimeout(r, settleMs))
+      const tipRect = tipEl && isNarrowViewport() ? tipEl.getBoundingClientRect() : null
+      const sheetH = tipRect
+        ? tipRect.height || SHEET_FALLBACK_H
+        : isNarrowViewport()
+          ? SHEET_FALLBACK_H
+          : 0
+      scrollTargetIntoView(found, {
+        sheetHeight: sheetH,
+        sheetTop: tipRect && tipRect.top > 0 ? tipRect.top : undefined,
+      })
+      // Re-measure after scroll (two frames); allow smooth scroll to settle.
+      await afterScrollFrames()
+      if (!prefersReducedMotion()) {
+        await new Promise(r => setTimeout(r, 280))
+        await afterScrollFrames()
+      }
       if (cancelled) return
       setAnchorEl(found)
     }
@@ -462,6 +470,22 @@ export default function DemoTour() {
     }
   }, [mode, currentStep, goNext, location.pathname])
 
+  // Auto-advance when the user closes the verdict panel themselves.
+  useEffect(() => {
+    if (mode.kind !== 'tour' || currentStep?.id !== 'route-cta-panel') {
+      panelSeenOpenRef.current = false
+      return
+    }
+    if (appDialogOpen) {
+      panelSeenOpenRef.current = true
+      return
+    }
+    if (panelSeenOpenRef.current) {
+      panelSeenOpenRef.current = false
+      goNext()
+    }
+  }, [mode, currentStep?.id, appDialogOpen, goNext])
+
   // Keyboard: Esc / arrows while tour or welcome/menu open.
   useEffect(() => {
     if (mode.kind === 'idle') return
@@ -514,6 +538,15 @@ export default function DemoTour() {
     const selector = currentStep.doItSelector || currentStep.anchor
     if (!selector) return
     window.setTimeout(() => clickSelector(selector), currentStep.id === 'route-pick-sample' ? 200 : 0)
+  }
+
+  const onClosePanelAndContinue = () => {
+    const dismissed = clickAppDialogDismiss()
+    if (!dismissed) {
+      goNext()
+      return
+    }
+    // Auto-advance watcher fires once the dialog leaves the DOM.
   }
 
   const openMenu = () => {
@@ -753,7 +786,21 @@ export default function DemoTour() {
                   </button>
                 </div>
               </div>
-              {!yieldToDialog && (
+              {yieldToDialog ? (
+                <div className="demo-tour-actions">
+                  <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                    Back
+                  </button>
+                  <span className="demo-tour-actions-spacer" />
+                  <button
+                    type="button"
+                    className="demo-tour-btn is-primary"
+                    onClick={onClosePanelAndContinue}
+                  >
+                    Close it and continue
+                  </button>
+                </div>
+              ) : (
                 <div className="demo-tour-actions">
                   <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
                     Back
@@ -772,9 +819,6 @@ export default function DemoTour() {
                         : 'Next'}
                   </button>
                 </div>
-              )}
-              {yieldToDialog && (
-                <p className="demo-tour-meta">Close the app panel (Cancel), then continue here.</p>
               )}
             </div>
           </>,

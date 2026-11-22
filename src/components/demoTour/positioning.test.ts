@@ -4,6 +4,7 @@ import {
   TALL_SPOT_VIEWPORT_RATIO,
   TALL_VIEWPORT_RATIO,
   clampSpotlightRect,
+  computeScrollDelta,
   placeTooltip,
   targetFitsAboveSheet,
   verdictCtaBody,
@@ -72,4 +73,40 @@ test('verdictCtaBody mirrors the live verdict label', () => {
   assert.match(verdictCtaBody('VERIFY'), /Verify before departure/)
   assert.match(verdictCtaBody('READY'), /READY/)
   assert.match(verdictCtaBody('READY'), /Proceed with departure/)
+})
+
+test('computeScrollDelta scrolls below-fold targets into the band above the sheet', () => {
+  // 390×844 mobile: header 56, sheet from y=508, target clamped at bottom edge.
+  const container = { top: 56, height: 732 }
+  const headerBottom = 56
+  const sheetTop = 508
+  const target = { top: 840, height: 48 }
+  const delta = computeScrollDelta(target, container, headerBottom, sheetTop)
+  // visibleTop = max(56+12, 56+12) = 68 → delta = 840 - 68 = 772
+  assert.equal(delta, 840 - 68)
+  assert.ok(delta > 0, 'must scroll content up')
+})
+
+test('computeScrollDelta is zero when the target already sits in the band', () => {
+  const container = { top: 56, height: 732 }
+  const target = { top: 120, height: 48 }
+  const delta = computeScrollDelta(target, container, 56, 508)
+  assert.equal(delta, 0)
+})
+
+test('computeScrollDelta pulls a target above the band back down', () => {
+  const container = { top: 56, height: 732 }
+  const target = { top: 20, height: 40 }
+  const delta = computeScrollDelta(target, container, 56, 508)
+  // visibleTop = 68 → delta = 20 - 68 = -48 (scroll content down)
+  assert.equal(delta, 20 - 68)
+  assert.ok(delta < 0)
+})
+
+test('computeScrollDelta pins tall targets to the header band', () => {
+  const container = { top: 56, height: 732 }
+  const target = { top: 200, height: 600 }
+  const delta = computeScrollDelta(target, container, 56, 508)
+  // bandH = 508-12 - 68 = 428; height 600 > 428 → pin top to 68
+  assert.equal(delta, 200 - 68)
 })
