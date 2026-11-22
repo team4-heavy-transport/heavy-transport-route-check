@@ -6,9 +6,36 @@ const port = Number(process.env.QA_PORT || 4173)
 const base = process.env.QA_URL || `http://127.0.0.1:${port}`
 const results = []
 
+/** Matches `DEMO_TOUR_STORAGE_KEY` / dismissed shape from `src/lib/demoTour.ts`. */
+const DEMO_TOUR_STORAGE_KEY = 'htr-demo-tour:v1'
+const DISMISSED_DEMO_TOUR_PROGRESS = JSON.stringify({
+  welcomeSeen: true,
+  completedSections: [],
+  tourDismissed: true,
+})
+
 function record(name, ok, detail = '') {
   results.push({ name, ok, detail })
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+async function seedDismissedDemoTour(page) {
+  await page.evaluate(({ key, value }) => {
+    try { localStorage.setItem(key, value) } catch {}
+  }, { key: DEMO_TOUR_STORAGE_KEY, value: DISMISSED_DEMO_TOUR_PROGRESS })
+}
+
+/** Persist dismissed tour across navigations/reloads in this browser context. */
+async function installDismissedDemoTourInit(context) {
+  await context.addInitScript(({ key, value }) => {
+    try { localStorage.setItem(key, value) } catch {}
+  }, { key: DEMO_TOUR_STORAGE_KEY, value: DISMISSED_DEMO_TOUR_PROGRESS })
+}
+
+async function clearDemoTourProgress(page) {
+  await page.evaluate(key => {
+    try { localStorage.removeItem(key) } catch {}
+  }, DEMO_TOUR_STORAGE_KEY)
 }
 
 async function overflowReport(page, selectors) {
@@ -183,6 +210,9 @@ async function main() {
   async function ensureLoggedIn(userName = 'Demo') {
     const loginHeading = page.getByRole('heading', { name: "Who's checking routes?" })
     if (await loginHeading.count()) {
+      // Switch user / login does not clear htr-demo-tour:v1 (browserStore isolation),
+      // but re-seed before Demo so welcome never blocks existing flows.
+      if (userName === 'Demo') await seedDismissedDemoTour(page)
       await page.getByRole('button', { name: `Continue as ${userName}` }).click()
       await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ state: 'detached', timeout: 30000 }).catch(() => {})
       await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 }).catch(() => {})
@@ -269,12 +299,78 @@ async function main() {
   )
   await page.setViewportSize({ width: 1440, height: 900 })
 
+  // --- Demo tour gate: fresh Demo (no htr-demo-tour:v1) sees welcome once ---
+  await clearDemoTourProgress(page)
   await page.getByRole('button', { name: 'Continue as Demo' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
-  const skipOnboarding = page.getByRole('button', { name: /skip/i })
-  if (await skipOnboarding.count()) {
-    await skipOnboarding.first().click()
+  const skipOnboardingFresh = page.getByRole('button', { name: /skip/i })
+  if (await skipOnboardingFresh.count()) {
+    await skipOnboardingFresh.first().click().catch(() => {})
   }
+  const welcomeBackdrop = page.locator('.demo-tour-welcome-backdrop')
+  await welcomeBackdrop.waitFor({ state: 'visible', timeout: 20000 })
+  const startTourBtn = page.getByRole('button', { name: 'Start the tour' })
+  record(
+    'Fresh Demo shows tour welcome with Start the tour',
+    (await welcomeBackdrop.isVisible()) && (await startTourBtn.isVisible()),
+  )
+  await page.getByRole('button', { name: 'Not now' }).click()
+  await welcomeBackdrop.waitFor({ state: 'detached', timeout: 10000 }).catch(() => {})
+  record(
+    'Not now closes Demo tour welcome',
+    (await page.locator('.demo-tour-welcome-backdrop').count()) === 0,
+  )
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 })
+  await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 }).catch(() => {})
+  const skipAfterWelcomeReload = page.getByRole('button', { name: /skip/i })
+  if (await skipAfterWelcomeReload.count()) await skipAfterWelcomeReload.first().click().catch(() => {})
+  await page.waitForTimeout(800)
+  const welcomeAfterReload = await page.locator('.demo-tour-welcome-backdrop').count()
+  record(
+    'Demo tour welcome does not re-appear after Not now + reload',
+    welcomeAfterReload === 0,
+    `backdropCount=${welcomeAfterReload}`,
+  )
+
+  // Existing Demo flows: keep welcome dismissed (Switch user does not clear this key).
+  await seedDismissedDemoTour(page)
+  await installDismissedDemoTourInit(context)
+
+  // --- Non-Demo account must never load the Demo tour UI or chunk ---
+  {
+    const luisContext = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      acceptDownloads: true,
+    })
+    const luisPage = await luisContext.newPage()
+    const demoTourChunks = []
+    luisPage.on('request', req => {
+      if (/DemoTour[^/?#]*\.js/i.test(req.url())) demoTourChunks.push(req.url())
+    })
+    await luisPage.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await luisPage.getByRole('button', { name: 'Continue as Luis' }).click()
+    await luisPage.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
+    const skipLuisTour = luisPage.getByRole('button', { name: /skip/i })
+    if (await skipLuisTour.count()) await skipLuisTour.first().click().catch(() => {})
+    await luisPage.waitForTimeout(1200)
+    const luisTourDom = await luisPage.evaluate(() => ({
+      root: document.querySelectorAll('.demo-tour-root').length,
+      launcher: document.querySelectorAll('.demo-tour-launcher').length,
+      anchor: document.querySelectorAll('[data-tour="demo-guide-anchor"]').length,
+    }))
+    record(
+      'Non-Demo (Luis) has no Demo tour UI',
+      luisTourDom.root === 0 && luisTourDom.launcher === 0 && luisTourDom.anchor === 0,
+      JSON.stringify(luisTourDom),
+    )
+    record(
+      'Non-Demo (Luis) does not request DemoTour-*.js chunk',
+      demoTourChunks.length === 0,
+      demoTourChunks.slice(0, 3).join(' | ') || 'none',
+    )
+    await luisContext.close()
+  }
+
   const homeTitle = await page.title()
   record(
     'Document title uses HTR brand',
@@ -469,6 +565,7 @@ async function main() {
     'Narrow mobile header avatar opens the user picker',
     await page.getByRole('heading', { name: "Who's checking routes?" }).isVisible(),
   )
+  await seedDismissedDemoTour(page)
   await page.getByRole('button', { name: 'Continue as Demo' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   const skipAfterMobileSwitch = page.getByRole('button', { name: /skip/i })
@@ -2110,15 +2207,21 @@ async function main() {
       viewport: { width: 1440, height: 900 },
       colorScheme,
     })
-    await context.addInitScript(() => {
-      try { localStorage.setItem('htr-current-user', 'demo') } catch {}
-    })
+    await context.addInitScript(({ key, value }) => {
+      try {
+        localStorage.setItem('htr-current-user', 'demo')
+        localStorage.setItem(key, value)
+      } catch {}
+    }, { key: DEMO_TOUR_STORAGE_KEY, value: DISMISSED_DEMO_TOUR_PROGRESS })
     const page = await context.newPage()
     await page.emulateMedia({ colorScheme })
     await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded', timeout: 60000 })
     await page.getByRole('heading', { name: /Route check/i }).first().waitFor({ timeout: 20000 }).catch(() => {})
     const login = page.getByRole('button', { name: 'Continue as Demo' })
-    if (await login.count()) await login.click().catch(() => {})
+    if (await login.count()) {
+      await seedDismissedDemoTour(page)
+      await login.click().catch(() => {})
+    }
     const skip = page.getByRole('button', { name: /skip/i })
     if (await skip.count()) await skip.first().click({ timeout: 2000 }).catch(() => {})
     const later = page.getByRole('button', { name: /later|not now|continue without/i })
@@ -2623,6 +2726,7 @@ async function main() {
 
   // Return to Demo for any remaining checks.
   await page.getByRole('button', { name: 'Switch user' }).first().click()
+  await seedDismissedDemoTour(page)
   await page.getByRole('button', { name: 'Continue as Demo' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
 
