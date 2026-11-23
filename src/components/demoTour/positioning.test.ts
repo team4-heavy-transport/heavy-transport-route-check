@@ -8,7 +8,10 @@ import {
   computeScrollDelta,
   decideMobileSheetPlacement,
   isUsableSpotlightRect,
+  isVisibleAnchorCandidate,
+  pickFirstVisibleAnchor,
   placeTooltip,
+  rectIntersectsViewport,
   rectsIntersect,
   targetFitsAboveSheet,
   verdictCtaBody,
@@ -171,4 +174,79 @@ test('computeScrollDelta pins tall targets to the header band', () => {
   const delta = computeScrollDelta(target, container, 56, 508)
   // bandH = 508-12 - 68 = 428; height 600 > 428 → pin top to 68
   assert.equal(delta, 200 - 68)
+})
+
+test('pickFirstVisibleAnchor skips inert/off-screen Switch user for the header chip', () => {
+  const mobile = { width: 390, height: 844 }
+  // Closed drawer chip: translated off-canvas (looks like Home tab after clamp).
+  const sidebarChip = {
+    id: 'sidebar-switch',
+    rect: { top: 788, left: -200, width: 80, height: 40 },
+    inertOrHidden: true,
+  }
+  const headerChip = {
+    id: 'header-switch',
+    rect: { top: 8, left: 48, width: 40, height: 40 },
+  }
+  const picked = pickFirstVisibleAnchor([sidebarChip, headerChip], mobile)
+  assert.equal(picked?.id, 'header-switch')
+  assert.equal(isVisibleAnchorCandidate(sidebarChip, mobile), false)
+  assert.equal(isVisibleAnchorCandidate(headerChip, mobile), true)
+  assert.equal(rectIntersectsViewport(sidebarChip.rect, mobile), false)
+  assert.equal(rectIntersectsViewport(headerChip.rect, mobile), true)
+})
+
+test('pickFirstVisibleAnchor returns an off-screen-but-rendered element when it is the only match', () => {
+  const desktop = { width: 1440, height: 900 }
+  const belowFold = {
+    id: 'below-fold',
+    rect: { top: 1200, left: 100, width: 400, height: 80 },
+  }
+  assert.equal(isVisibleAnchorCandidate(belowFold, desktop), true)
+  assert.equal(rectIntersectsViewport(belowFold.rect, desktop), false)
+  assert.equal(pickFirstVisibleAnchor([belowFold], desktop)?.id, 'below-fold')
+})
+
+test('pickFirstVisibleAnchor prefers the in-viewport match when both are rendered', () => {
+  const mobile = { width: 390, height: 844 }
+  // Sidebar chip in a closed drawer: rendered size but inert — must lose.
+  const sidebarChip = {
+    id: 'sidebar-switch',
+    rect: { top: 788, left: -200, width: 80, height: 40 },
+    inertOrHidden: true,
+  }
+  const headerChip = {
+    id: 'header-switch',
+    rect: { top: 8, left: 48, width: 40, height: 40 },
+  }
+  // Both rendered (neither inert): prefer the one intersecting the viewport.
+  const offScreen = {
+    id: 'off-screen-copy',
+    rect: { top: 1200, left: 24, width: 342, height: 48 },
+  }
+  const onScreen = {
+    id: 'on-screen',
+    rect: { top: 100, left: 24, width: 342, height: 48 },
+  }
+  assert.equal(pickFirstVisibleAnchor([sidebarChip, headerChip], mobile)?.id, 'header-switch')
+  assert.equal(pickFirstVisibleAnchor([offScreen, onScreen], mobile)?.id, 'on-screen')
+  assert.equal(pickFirstVisibleAnchor([onScreen, offScreen], mobile)?.id, 'on-screen')
+})
+
+test('pickFirstVisibleAnchor rejects zero-size, display:none, and visibility:hidden', () => {
+  const viewport = { width: 390, height: 844 }
+  const zero = { id: 'zero', rect: { top: 10, left: 10, width: 0, height: 40 } }
+  const none = {
+    id: 'none',
+    rect: { top: 10, left: 10, width: 40, height: 40 },
+    display: 'none',
+  }
+  const hidden = {
+    id: 'hidden',
+    rect: { top: 10, left: 10, width: 40, height: 40 },
+    visibility: 'hidden',
+  }
+  const ok = { id: 'ok', rect: { top: 10, left: 10, width: 40, height: 40 } }
+  assert.equal(pickFirstVisibleAnchor([zero, none, hidden, ok], viewport)?.id, 'ok')
+  assert.equal(pickFirstVisibleAnchor([zero, none, hidden], viewport), null)
 })

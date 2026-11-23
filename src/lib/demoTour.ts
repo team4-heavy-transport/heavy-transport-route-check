@@ -49,22 +49,66 @@ export type TourAdvance =
   | { type: 'present'; selector: string }
   | { type: 'route'; path: string }
 
+export type TourSetupFallback = {
+  body: string
+  ctaLabel: string
+  ctaSection: TourSectionId
+}
+
 export type TourStepDef = {
   id: string
   section: TourSectionId
   title: string
   body: string
+  /** Narrow-viewport body (≤720px); falls back to `body` when omitted. */
+  bodyNarrow?: string
   /** Prefer [data-tour="…"]; falls back to a centred card if missing. */
   anchor?: string
   /** Navigate here before showing the step (if not already there). */
   route?: string
   /** Skip when the anchor never appears (timeout). */
   optional?: boolean
+  /**
+   * When the anchor is missing, show this tip instead of skipping/hanging
+   * (e.g. Jobs guide with no saved jobs yet).
+   */
+  setupFallback?: TourSetupFallback
   advance?: TourAdvance
   /** Label for a button that performs the interactive action for the user. */
   doItLabel?: string
   /** Selector to click for "Do it for me" (defaults to anchor). */
   doItSelector?: string
+  /**
+   * Included in single-section guides only — omitted from the full tour
+   * (e.g. Route check closing confirmation before Jobs).
+   */
+  singleFlowOnly?: boolean
+  /** Last-step CTA that starts another guide (single-flow closers). */
+  nextFlowCta?: { label: string; section: TourSectionId }
+}
+
+/** One-line descriptions for the Guide flow picker. */
+export const TOUR_FLOW_DESCRIPTIONS: Record<'full' | TourSectionId, string> = {
+  full: 'Walk every guide in order — Overview through Data partners.',
+  overview:
+    'See the dispatch home, where to import a route, and the demo vs sample views.',
+  'route-check':
+    'Pick a sample permit, run a live check, read the verdict, save it as a job.',
+  jobs: 'Review monitored jobs, intervals, and edit a saved job card.',
+  alerts: 'Filter HOLD/VERIFY alerts and skim check history by route.',
+  corridor: 'Scope the live map, search a road, and open layers.',
+  settings: 'Open settings tabs and save organisation profile changes.',
+  chrome: 'Use workspace search, the alerts bell, and Switch user.',
+  'data-partners': 'See the planned partners page (feeds not connected yet).',
+}
+
+export type TourFlowId = 'full' | TourSectionId
+
+export type TourFlowEntry = {
+  id: TourFlowId
+  label: string
+  description: string
+  stepCount: number
 }
 
 /** Full tour step list — chained in this order. */
@@ -258,6 +302,15 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     doItLabel: 'Save job for me',
     doItSelector: '[data-tour="route-save-job-submit"]',
   },
+  {
+    id: 'route-job-saved',
+    section: 'route-check',
+    title: 'Job saved',
+    body: 'Your check is now a job. Open Jobs to see it being monitored.',
+    route: '/jobs',
+    singleFlowOnly: true,
+    nextFlowCta: { label: 'Open the Jobs guide', section: 'jobs' },
+  },
 
   // ── Jobs ──────────────────────────────────────────────────────────────
   {
@@ -284,6 +337,11 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     anchor: '[data-tour="jobs-card"]',
     route: '/jobs',
     optional: true,
+    setupFallback: {
+      body: 'No saved jobs in this account yet. Run the Route check guide first to pick a sample permit, get a verdict, and save it as a job — then come back here.',
+      ctaLabel: 'Run the Route check guide first',
+      ctaSection: 'route-check',
+    },
   },
   {
     id: 'jobs-edit',
@@ -403,6 +461,7 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     section: 'chrome',
     title: 'Switch user',
     body: 'Switch user returns to the login list. This tour only appears for the Demo account — other users never see it.',
+    bodyNarrow: 'Tap your initials at the top to switch user. This tour only appears for the Demo account — other users never see it.',
     anchor: '[data-tour="switch-user"]',
     route: '/',
   },
@@ -519,6 +578,59 @@ export function stepsForSection(section: TourSectionId): TourStepDef[] {
   return TOUR_STEPS.filter(step => step.section === section)
 }
 
+/** Full tour step list — excludes single-flow-only closing steps. */
+export function stepsForFullTour(): TourStepDef[] {
+  return TOUR_STEPS.filter(step => !step.singleFlowOnly)
+}
+
+/** Picker entries: Full tour first, then each section guide in order. */
+export function tourFlowEntries(): TourFlowEntry[] {
+  return [
+    {
+      id: 'full',
+      label: 'Full tour',
+      description: TOUR_FLOW_DESCRIPTIONS.full,
+      stepCount: stepsForFullTour().length,
+    },
+    ...TOUR_SECTIONS.map(section => ({
+      id: section.id as TourFlowId,
+      label: section.label,
+      description: TOUR_FLOW_DESCRIPTIONS[section.id],
+      stepCount: stepsForSection(section.id).length,
+    })),
+  ]
+}
+
+export function isSectionDone(
+  section: TourSectionId,
+  progress: DemoTourProgress,
+): boolean {
+  return progress.completedSections.includes(section)
+}
+
+export function isFullTourDone(progress: DemoTourProgress): boolean {
+  return TOUR_SECTION_ORDER.every(id => progress.completedSections.includes(id))
+}
+
+export function isFlowDone(flowId: TourFlowId, progress: DemoTourProgress): boolean {
+  if (flowId === 'full') return isFullTourDone(progress)
+  return isSectionDone(flowId, progress)
+}
+
+/** Accessible name for a picker entry (includes step count and done state). */
+export function flowAccessibleName(entry: TourFlowEntry, done: boolean): string {
+  const steps = `${entry.stepCount} step${entry.stepCount === 1 ? '' : 's'}`
+  return done ? `${entry.label}, ${steps}, done` : `${entry.label}, ${steps}`
+}
+
+/** Next incomplete section for picker focus; `full` when everything is done. */
+export function nextIncompleteFlowId(progress: DemoTourProgress): TourFlowId {
+  for (const id of TOUR_SECTION_ORDER) {
+    if (!progress.completedSections.includes(id)) return id
+  }
+  return 'full'
+}
+
 export function sectionLabel(section: TourSectionId): string {
   return TOUR_SECTIONS.find(item => item.id === section)?.label ?? section
 }
@@ -558,7 +670,7 @@ export function sectionsCompletedByAdvance(
  * Used by unit tests and to keep Guide menu progress honest during a full tour.
  */
 export function completedSectionsAfterFullWalk(
-  steps: readonly TourStepDef[] = TOUR_STEPS,
+  steps: readonly TourStepDef[] = stepsForFullTour(),
 ): TourSectionId[] {
   const done = new Set<TourSectionId>()
   for (let i = 0; i < steps.length; i++) {

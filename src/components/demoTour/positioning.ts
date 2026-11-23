@@ -364,9 +364,12 @@ export function scrollTargetIntoView(
     headerHeight?: number
     /** Absolute viewport Y of the sheet top when known (preferred over sheetHeight). */
     sheetTop?: number
+    /** Override scroll behavior (default: smooth unless reduced-motion). */
+    behavior?: ScrollBehavior
   } = {},
 ): void {
-  const behavior = prefersReducedMotion() ? 'instant' : 'smooth'
+  const behavior =
+    opts.behavior ?? (prefersReducedMotion() ? 'instant' : 'smooth')
   const headerBottom = opts.headerHeight ?? HEADER_H
   const viewportH = typeof window !== 'undefined' ? window.innerHeight : 800
   const sheetTop =
@@ -384,7 +387,7 @@ export function scrollTargetIntoView(
         const maxScroll = scrollParent.scrollHeight - scrollParent.clientHeight
         const next = clamp(scrollParent.scrollTop + delta, 0, Math.max(0, maxScroll))
         if (typeof scrollParent.scrollTo === 'function') {
-          scrollParent.scrollTo({ top: next, behavior: behavior as ScrollBehavior })
+          scrollParent.scrollTo({ top: next, behavior })
         } else {
           scrollParent.scrollTop = next
         }
@@ -396,7 +399,7 @@ export function scrollTargetIntoView(
     const containerRect = { top: 0, height: viewportH }
     const delta = computeScrollDelta(targetRect, containerRect, headerBottom, sheetTop)
     if (Math.abs(delta) > 2) {
-      window.scrollBy({ top: delta, behavior: behavior as ScrollBehavior })
+      window.scrollBy({ top: delta, behavior })
       return
     }
 
@@ -404,26 +407,202 @@ export function scrollTargetIntoView(
     el.scrollIntoView({
       block: narrow ? 'start' : 'center',
       inline: 'nearest',
-      behavior: behavior as ScrollBehavior,
+      behavior,
     })
   } catch {
     el.scrollIntoView(true)
   }
 }
 
-/** Poll / MutationObserver until selector matches or timeout. */
+/**
+ * True when the element's expanded+clamped spotlight would be a real on-screen
+ * target (intersects the viewport and passes {@link isUsableSpotlightRect}).
+ */
+export function elementHasUsableSpotlight(
+  el: Element,
+  viewport: { width: number; height: number } = viewportSize(),
+): boolean {
+  const box = el.getBoundingClientRect()
+  const raw = expandRect({ top: box.top, left: box.left, width: box.width, height: box.height })
+  if (!rectIntersectsViewport(raw, viewport)) return false
+  return isUsableSpotlightRect(clampSpotlightRect(raw, viewport))
+}
+
+/**
+ * Scroll into view, wait for settle, and if still off-screen snap instantly.
+ * Resolves when the target has a usable on-screen spotlight rect or timeout.
+ */
+export async function ensureAnchorInView(
+  el: Element,
+  opts: {
+    sheetHeight?: number
+    sheetTop?: number
+    timeoutMs?: number
+    signal?: { cancelled?: boolean }
+  } = {},
+): Promise<boolean> {
+  const timeoutMs = opts.timeoutMs ?? 1200
+  const scrollOpts = {
+    sheetHeight: opts.sheetHeight,
+    sheetTop: opts.sheetTop,
+  }
+  scrollTargetIntoView(el, scrollOpts)
+  await afterScrollFrames()
+  if (!prefersReducedMotion()) {
+    await new Promise(r => setTimeout(r, 280))
+    await afterScrollFrames()
+  }
+  if (opts.signal?.cancelled) return false
+  if (elementHasUsableSpotlight(el)) return true
+
+  // Smooth scroll may still be mid-flight — snap and poll.
+  scrollTargetIntoView(el, { ...scrollOpts, behavior: 'instant' })
+  await afterScrollFrames()
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (opts.signal?.cancelled) return false
+    if (elementHasUsableSpotlight(el)) return true
+    await new Promise(r => setTimeout(r, 50))
+  }
+  return elementHasUsableSpotlight(el)
+}
+
+/** Snapshot used by the pure rendered-anchor picker (unit-testable with fake rects). */
+export type VisibleAnchorCandidate = {
+  rect: Rect
+  /** From getComputedStyle(el).display */
+  display?: string
+  /** From getComputedStyle(el).visibility */
+  visibility?: string
+  /** True when the element or an ancestor is inert / [hidden] / aria-hidden. */
+  inertOrHidden?: boolean
+}
+
+/** True when rect has size and overlaps the viewport (edges touching count as no overlap). */
+export function rectIntersectsViewport(
+  rect: Rect,
+  viewport: { width: number; height: number },
+): boolean {
+  if (!(rect.width > 0 && rect.height > 0)) return false
+  return rectsIntersect(rect, {
+    top: 0,
+    left: 0,
+    width: viewport.width,
+    height: viewport.height,
+  })
+}
+
+/**
+ * Rendered gate for tour anchors (not viewport-clipped).
+ * Non-zero rect, not display:none / visibility:hidden, not inert/aria-hidden.
+ * Below-the-fold targets pass so the tour can scroll them into view.
+ */
+export function isVisibleAnchorCandidate(
+  candidate: VisibleAnchorCandidate,
+  _viewport?: { width: number; height: number },
+): boolean {
+  if (candidate.inertOrHidden) return false
+  if (candidate.display === 'none') return false
+  if (candidate.visibility === 'hidden' || candidate.visibility === 'collapse') return false
+  return candidate.rect.width > 0 && candidate.rect.height > 0
+}
+
+/**
+ * Prefer a rendered candidate that intersects the viewport; else the first
+ * rendered match (caller scrolls it into view). Inert/hidden drawer duplicates
+ * lose to the on-screen header chip.
+ */
+export function pickFirstVisibleAnchor<T extends VisibleAnchorCandidate>(
+  candidates: readonly T[],
+  viewport: { width: number; height: number },
+): T | null {
+  const rendered = candidates.filter(c => isVisibleAnchorCandidate(c, viewport))
+  if (!rendered.length) return null
+  const inView = rendered.find(c => rectIntersectsViewport(c.rect, viewport))
+  return inView ?? rendered[0]
+}
+
+function hasInertOrHiddenAncestor(el: Element): boolean {
+  let node: Element | null = el
+  while (node) {
+    if (node.hasAttribute('hidden')) return true
+    if (node.getAttribute('aria-hidden') === 'true') return true
+    if (node.hasAttribute('inert')) return true
+    if (node instanceof HTMLElement && node.inert) return true
+    node = node.parentElement
+  }
+  return false
+}
+
+function viewportSize(): { width: number; height: number } {
+  return {
+    width: typeof window !== 'undefined' ? window.innerWidth : 0,
+    height: typeof window !== 'undefined' ? window.innerHeight : 0,
+  }
+}
+
+type AnchorCandidateWithEl = VisibleAnchorCandidate & { el: Element }
+
+function candidateFromElement(el: Element): AnchorCandidateWithEl {
+  let display: string | undefined
+  let visibility: string | undefined
+  try {
+    const style = getComputedStyle(el)
+    display = style.display
+    visibility = style.visibility
+  } catch {
+    // Non-DOM / test stubs without getComputedStyle.
+  }
+  const box = el.getBoundingClientRect()
+  return {
+    el,
+    rect: { top: box.top, left: box.left, width: box.width, height: box.height },
+    display,
+    visibility,
+    inertOrHidden: hasInertOrHiddenAncestor(el),
+  }
+}
+
+/** Live DOM check: rendered (non-zero rect, style ok, not inert/aria-hidden). */
+export function isElementVisibleAnchor(
+  el: Element,
+  viewport: { width: number; height: number } = viewportSize(),
+): boolean {
+  const candidate = candidateFromElement(el)
+  return isVisibleAnchorCandidate(candidate, viewport)
+}
+
+/**
+ * querySelectorAll + prefer viewport-intersecting rendered match, else first
+ * rendered (DOM order). Used for anchors and doItSelector clicks.
+ */
+export function queryVisibleSelector(
+  selector: string,
+  opts: {
+    root?: ParentNode
+    viewport?: { width: number; height: number }
+  } = {},
+): Element | null {
+  const root = opts.root ?? document
+  const viewport = opts.viewport ?? viewportSize()
+  const matches = Array.from(root.querySelectorAll(selector))
+  const candidates = matches.map(candidateFromElement)
+  return pickFirstVisibleAnchor(candidates, viewport)?.el ?? null
+}
+
+/** Poll / MutationObserver until a rendered selector match appears or timeout. */
 export function waitForSelector(
   selector: string,
   opts: { timeoutMs?: number; root?: ParentNode } = {},
 ): Promise<Element | null> {
   const { timeoutMs = 4000, root = document } = opts
-  const existing = root.querySelector(selector)
+  const existing = queryVisibleSelector(selector, { root })
   if (existing) return Promise.resolve(existing)
 
   return new Promise(resolve => {
     const started = Date.now()
-    const observer = new MutationObserver(() => {
-      const found = root.querySelector(selector)
+    const check = () => {
+      const found = queryVisibleSelector(selector, { root })
       if (found) {
         cleanup()
         resolve(found)
@@ -431,17 +610,9 @@ export function waitForSelector(
         cleanup()
         resolve(null)
       }
-    })
-    const timer = window.setInterval(() => {
-      const found = root.querySelector(selector)
-      if (found) {
-        cleanup()
-        resolve(found)
-      } else if (Date.now() - started >= timeoutMs) {
-        cleanup()
-        resolve(null)
-      }
-    }, 120)
+    }
+    const observer = new MutationObserver(check)
+    const timer = window.setInterval(check, 120)
     const cleanup = () => {
       observer.disconnect()
       window.clearInterval(timer)
@@ -451,7 +622,7 @@ export function waitForSelector(
 }
 
 export function clickSelector(selector: string): boolean {
-  const el = document.querySelector(selector)
+  const el = queryVisibleSelector(selector)
   if (!el) return false
   if (el instanceof HTMLElement) {
     el.click()
