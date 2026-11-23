@@ -33,7 +33,7 @@ export const TALL_SPOT_VIEWPORT_RATIO = 0.4
  * Mobile tip body scrolls inside this fraction of the viewport.
  * Card itself is capped to the visible band (viewport − header − tab bar).
  */
-export const MOBILE_SHEET_MAX_VH = 0.55
+export const MOBILE_SHEET_MAX_VH = 0.45
 /** Visible content band between header and mobile tab bar. */
 export const MOBILE_VISIBLE_BAND = {
   header: HEADER_H,

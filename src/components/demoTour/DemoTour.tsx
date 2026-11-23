@@ -558,6 +558,7 @@ export default function DemoTour() {
             160,
             viewport.height - MOBILE_VISIBLE_BAND.header - MOBILE_VISIBLE_BAND.tabBar - 20,
           )
+          // Cap decision height so placement keeps a free band for the spotlight target.
           const decisionSheetHeight = narrow
             ? Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), bandMax))
             : sheetH
@@ -565,11 +566,10 @@ export default function DemoTour() {
             sheetHeight: sheetH,
             decisionSheetHeight,
           })
-          // Truncate using the larger height so the spotlight never sits under the tip.
-          const truncateH = Math.max(sheetH, decisionSheetHeight)
+          // Truncate with the real tip height only — inflated decision H was eating the hole.
           const spotRect =
             narrow && (placed.placement === 'sheet' || placed.placement === 'sheet-top')
-              ? truncateSpotlightToVisibleBand(rect, viewport, placed.placement, truncateH)
+              ? truncateSpotlightToVisibleBand(rect, viewport, placed.placement, sheetH)
               : rect
           setSpot(isUsableSpotlightRect(spotRect) ? spotRect : rect)
           setTipPos(placed)
