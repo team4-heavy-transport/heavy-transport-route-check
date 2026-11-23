@@ -14,6 +14,7 @@ import {
   rectIntersectsViewport,
   rectsIntersect,
   targetFitsAboveSheet,
+  truncateSpotlightToVisibleBand,
   verdictCtaBody,
 } from './positioning.ts'
 
@@ -106,18 +107,38 @@ test('decideMobileSheetPlacement keeps bottom sheet when the target clears it', 
   assert.equal(decideMobileSheetPlacement(clear, mobile, { sheetHeight: 280 }), 'sheet')
 })
 
-test('decideMobileSheetPlacement uses compact when neither full edge clears the target', () => {
-  const mobile = { width: 390, height: 844 }
-  // Tall corridor panel spanning most of the viewport below the header.
-  const tall = { top: 70, left: 0, width: 390, height: 700 }
+test('decideMobileSheetPlacement keeps a full sheet when neither edge fully clears the target', () => {
+  const mobile = { width: 375, height: 667 }
+  // Tall panel spanning most of the viewport below the header.
+  const tall = { top: 70, left: 0, width: 375, height: 520 }
   const placement = decideMobileSheetPlacement(tall, mobile, {
     sheetHeight: 280,
     compactHeight: COMPACT_SHEET_H,
   })
   assert.ok(
-    placement === 'sheet-compact' || placement === 'sheet-compact-top',
-    `expected compact, got ${placement}`,
+    placement === 'sheet' || placement === 'sheet-top',
+    `expected full sheet edge, got ${placement}`,
   )
+})
+
+test('decideMobileSheetPlacement prefers the edge that leaves the target top visible at 375×667', () => {
+  const mobile = { width: 375, height: 667 }
+  const sheetH = 260
+  // Target near the top — bottom sheet leaves its top visible.
+  const nearTop = { top: 80, left: 16, width: 343, height: 48 }
+  assert.equal(decideMobileSheetPlacement(nearTop, mobile, { sheetHeight: sheetH }), 'sheet')
+  // Target near the bottom — top sheet leaves its top visible above the tab bar band.
+  const nearBottom = { top: 520, left: 16, width: 343, height: 56 }
+  assert.equal(decideMobileSheetPlacement(nearBottom, mobile, { sheetHeight: sheetH }), 'sheet-top')
+})
+
+test('truncateSpotlightToVisibleBand clips to the band above a bottom sheet', () => {
+  const mobile = { width: 375, height: 667 }
+  const tall = { top: 60, left: 10, width: 350, height: 500 }
+  const clipped = truncateSpotlightToVisibleBand(tall, mobile, 'sheet', 260)
+  assert.ok(clipped.top >= 56)
+  assert.ok(clipped.top + clipped.height <= mobile.height - 56 - 260 + 1)
+  assert.ok(isUsableSpotlightRect(clipped))
 })
 
 test('placeTooltip on mobile returns sheet-top for under-sheet targets', () => {

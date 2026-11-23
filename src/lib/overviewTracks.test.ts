@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { downsampleTrack, parseGpxTrack } from './gpxTrack.ts'
 import {
+  compareTracksForMapDrawOrder,
   OVERVIEW_FEATURED_COPY,
   OVERVIEW_FEATURED_PERMIT_ID,
   OVERVIEW_MONITOR_ROUTES,
@@ -88,7 +89,29 @@ test('overview line colours match the Ready / Verify / Hold legend', () => {
   assert.equal(SAMPLE_ROUTE_COLOR, '#0b57d0')
 })
 
-test('featured hero transport is a route drawn on the overview map', () => {
+test('map draw order paints READY then VERIFY then HOLD, selected last', () => {
+  const tracks = [
+    { id: 'hold', status: 'HOLD' as const },
+    { id: 'ready', status: 'READY' as const },
+    { id: 'verify-a', status: 'VERIFY' as const },
+    { id: 'verify-b', status: 'VERIFY' as const },
+  ]
+  const bySeverity = [...tracks].sort((a, b) => compareTracksForMapDrawOrder(a, b, null))
+  assert.deepEqual(
+    bySeverity.map(t => t.id),
+    ['ready', 'verify-a', 'verify-b', 'hold'],
+  )
+  const selectedHold = [...tracks].sort((a, b) => compareTracksForMapDrawOrder(a, b, 'hold'))
+  assert.equal(selectedHold[selectedHold.length - 1].id, 'hold')
+  const selectedReady = [...tracks].sort((a, b) => compareTracksForMapDrawOrder(a, b, 'ready'))
+  assert.equal(selectedReady[selectedReady.length - 1].id, 'ready')
+  assert.deepEqual(
+    selectedReady.slice(0, -1).map(t => t.status),
+    ['VERIFY', 'VERIFY', 'HOLD'],
+  )
+})
+
+test('featured hero transport config stays available for demo helpers', () => {
   const featured = getOverviewFeatured()
   assert.equal(OVERVIEW_FEATURED_PERMIT_ID, 'munchen-stuttgart')
   assert.equal(featured.permit.id, 'munchen-stuttgart')
@@ -98,8 +121,8 @@ test('featured hero transport is a route drawn on the overview map', () => {
   assert.ok(OVERVIEW_MONITOR_ROUTES.some(route => route.id === featured.permit.id))
   const overview = readFileSync('src/pages/MarketplaceOverview.tsx', 'utf8')
   assert.equal(overview.includes("getPermittedRoute('duisburg-munich')"), false)
-  assert.ok(overview.includes('OVERVIEW_FEATURED_PERMIT_ID'))
-  assert.ok(overview.includes('highlightPermitId'))
+  assert.ok(overview.includes('buildOverviewRoutes'))
+  assert.ok(overview.includes('OverviewRoutesMap'))
 })
 
 test('downsample keeps endpoints and a shorter line', () => {
@@ -115,5 +138,5 @@ test('overview and sample maps no longer use the illustrated Germany heatmap', (
   assert.equal(overview.includes('MobilityHeatmap'), false)
   assert.equal(overview.includes('germanyOutline'), false)
   assert.equal(overview.includes('Hamburg, Bremen, Leipzig, Duisburg, München'), false)
-  assert.ok(overview.includes('LazyPermitMap'))
+  assert.ok(overview.includes('OverviewRoutesMap'))
 })

@@ -191,9 +191,11 @@ test('no tour step anchors a known-tall page/section container', () => {
   }
   // Compact replacements we expect to be in use.
   const anchors = TOUR_STEPS.map(s => s.anchor).filter(Boolean)
-  assert.ok(anchors.includes('[data-tour="overview-mode-banner"]'))
+  assert.ok(anchors.includes('[data-tour="overview-workflow"]'))
+  assert.ok(anchors.includes('[data-tour="overview-check-new"]'))
   assert.ok(anchors.includes('[data-tour="route-vehicle-heading"]'))
   assert.ok(anchors.includes('[data-tour="route-evidence-heading"]'))
+  assert.ok(anchors.includes('[data-tour="route-open-fullmap"]'))
   assert.ok(anchors.includes('[data-tour="activity-history-heading"]'))
 })
 
@@ -246,9 +248,10 @@ test('flow picker list order and step counts derive from step definitions', () =
 
 test('Route check single flow ends on Job saved; full tour skips that closer', () => {
   const routeSteps = stepsForSection('route-check')
-  assert.equal(routeSteps.length, 15)
+  assert.equal(routeSteps.length, 16)
   assert.equal(routeSteps[routeSteps.length - 1]?.id, 'route-job-saved')
   assert.equal(routeSteps[routeSteps.length - 2]?.id, 'route-save-submit')
+  assert.ok(routeSteps.some(s => s.id === 'route-open-fullmap'))
   assert.ok(routeSteps[routeSteps.length - 2]?.doItLabel)
   assert.equal(routeSteps[routeSteps.length - 1]?.doItLabel, undefined)
   assert.equal(routeSteps[routeSteps.length - 1]?.nextFlowCta?.section, 'jobs')
@@ -287,8 +290,9 @@ test('picker and step copy avoid CTA jargon', () => {
   }
   assert.match(
     TOUR_FLOW_DESCRIPTIONS.overview,
-    /where to import a route/i,
+    /Check new route/i,
   )
+  assert.equal(stepsForSection('overview').length, 8)
 })
 
 test('completing a single flow marks only that flow; full tour done = all flows', () => {

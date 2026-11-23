@@ -42,10 +42,13 @@ import {
   isNarrowViewport,
   isUsableSpotlightRect,
   measureTooltipSize,
+  MOBILE_SHEET_MAX_VH,
+  MOBILE_VISIBLE_BAND,
   placeTooltip,
   prefersReducedMotion,
   readVerdictFromDom,
   rectIntersectsViewport,
+  truncateSpotlightToVisibleBand,
   verdictCtaBody,
   waitForSelector,
   type Rect,
@@ -110,7 +113,37 @@ export default function DemoTour() {
   const currentStep =
     mode.kind === 'tour' ? mode.steps[mode.index] ?? null : null
 
+  const closeOverviewFullMap = useCallback(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('map') !== 'full') return
+      params.delete('map')
+      params.delete('route')
+      const next = params.toString()
+      navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true })
+    } catch {
+      // ignore
+    }
+  }, [location.pathname, navigate])
+
+  const openOverviewFullMap = useCallback(() => {
+    try {
+      if (document.querySelector('[data-tour="overview-fullmap"]')) return
+      const openBtn = document.querySelector<HTMLElement>('[data-tour="overview-fullmap-open"]')
+      if (openBtn) {
+        openBtn.click()
+        return
+      }
+      const params = new URLSearchParams(window.location.search)
+      params.set('map', 'full')
+      navigate({ pathname: '/', search: `?${params.toString()}` }, { replace: true })
+    } catch {
+      // ignore
+    }
+  }, [navigate])
+
   const closeTour = useCallback((opts?: { focusLauncher?: boolean }) => {
+    closeOverviewFullMap()
     setMode({ kind: 'idle' })
     setAnchorEl(null)
     setSpot(null)
@@ -119,7 +152,7 @@ export default function DemoTour() {
     if (opts?.focusLauncher !== false) {
       queueMicrotask(() => launcherRef.current?.focus())
     }
-  }, [])
+  }, [closeOverviewFullMap])
 
   const persist = useCallback((next: DemoTourProgress) => {
     writeTourProgress(next)
@@ -246,6 +279,7 @@ export default function DemoTour() {
       openMenu()
       return
     }
+    closeOverviewFullMap()
     const section = currentStep.section
     const next = markSectionComplete(section)
     if (mode.full && isFullTourDone(next)) {
@@ -258,22 +292,24 @@ export default function DemoTour() {
     setSetupFallback(null)
     waitingRef.current = false
     openMenu(nextIncompleteFlowId(next))
-  }, [currentStep, mode, openMenu, persist])
+  }, [closeOverviewFullMap, currentStep, mode, openMenu, persist])
 
   const returnToGuides = useCallback(() => {
+    closeOverviewFullMap()
     setAnchorEl(null)
     setSpot(null)
     setSetupFallback(null)
     waitingRef.current = false
     const stored = readTourProgress()
     openMenu(nextIncompleteFlowId(stored))
-  }, [openMenu])
+  }, [closeOverviewFullMap, openMenu])
 
   const goToIndex = useCallback(
     (nextIndex: number) => {
       const current = modeRef.current
       if (current.kind !== 'tour') return
       if (nextIndex < 0) return
+      const fromStep = current.steps[current.index]
       markSectionsLeaving(current.steps, current.index, nextIndex)
       if (nextIndex >= current.steps.length) {
         const section = current.steps[current.index]?.section
@@ -293,6 +329,27 @@ export default function DemoTour() {
         return
       }
       const step = current.steps[nextIndex]
+      const fullmapSteps = new Set([
+        'overview-fullmap',
+        'overview-fullmap-modes',
+        'overview-fullmap-minimise',
+      ])
+      // Keep full-size map open for modes/minimise; close when leaving that trio.
+      if (fullmapSteps.has(step.id) && step.id !== 'overview-fullmap') {
+        openOverviewFullMap()
+      } else if (
+        fromStep &&
+        fullmapSteps.has(fromStep.id) &&
+        !fullmapSteps.has(step.id)
+      ) {
+        closeOverviewFullMap()
+      } else if (
+        fromStep?.id === 'overview-fullmap-minimise' ||
+        (fromStep?.id === 'overview-fullmap-modes' && step.id === 'overview-fullmap')
+      ) {
+        if (step.id === 'overview-fullmap') closeOverviewFullMap()
+      }
+
       if (step.route && location.pathname !== step.route) {
         navigate(step.route)
       }
@@ -303,7 +360,15 @@ export default function DemoTour() {
       setSetupFallback(null)
       setMode({ ...current, index: nextIndex })
     },
-    [closeTour, location.pathname, markSectionsLeaving, navigate, persist],
+    [
+      closeOverviewFullMap,
+      closeTour,
+      location.pathname,
+      markSectionsLeaving,
+      navigate,
+      openOverviewFullMap,
+      persist,
+    ],
   )
 
   const goNext = useCallback(() => {
@@ -389,6 +454,16 @@ export default function DemoTour() {
       if (step.route && location.pathname !== step.route) {
         navigate(step.route)
         await new Promise(r => setTimeout(r, 80))
+      }
+      // Full-size map steps 7–8 need the overlay open for their anchors.
+      if (
+        step.id === 'overview-fullmap-modes' ||
+        step.id === 'overview-fullmap-minimise'
+      ) {
+        if (!document.querySelector('[data-tour="overview-fullmap"]')) {
+          openOverviewFullMap()
+          await waitForSelector('[data-tour="overview-fullmap"]', { timeoutMs: 2500 })
+        }
       }
       // Interactive "show samples": if list already open, treat as done.
       if (step.id === 'route-show-samples' && document.querySelector('[data-tour="route-permit-hamburg-hannover"]')) {
@@ -479,18 +554,25 @@ export default function DemoTour() {
           setSpot(null)
           setTipPos(placeTooltip(null, tipSize, viewport))
         } else {
-          setSpot(rect)
-          // Decision uses a stable full-sheet height so a compact tip cannot
-          // flip back to a full bottom sheet that covers the target again.
-          const decisionSheetHeight = narrow
-            ? Math.max(sheetH, Math.min(280, Math.floor(viewport.height * 0.36)))
-            : sheetH
-          setTipPos(
-            placeTooltip(rect, tipSize, viewport, {
-              sheetHeight: sheetH,
-              decisionSheetHeight,
-            }),
+          const bandMax = Math.max(
+            160,
+            viewport.height - MOBILE_VISIBLE_BAND.header - MOBILE_VISIBLE_BAND.tabBar - 20,
           )
+          // Cap decision height so placement keeps a free band for the spotlight target.
+          const decisionSheetHeight = narrow
+            ? Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), bandMax))
+            : sheetH
+          const placed = placeTooltip(rect, tipSize, viewport, {
+            sheetHeight: sheetH,
+            decisionSheetHeight,
+          })
+          // Truncate with the real tip height only — inflated decision H was eating the hole.
+          const spotRect =
+            narrow && (placed.placement === 'sheet' || placed.placement === 'sheet-top')
+              ? truncateSpotlightToVisibleBand(rect, viewport, placed.placement, sheetH)
+              : rect
+          setSpot(isUsableSpotlightRect(spotRect) ? spotRect : rect)
+          setTipPos(placed)
         }
       } else {
         setSpot(null)
@@ -698,6 +780,10 @@ export default function DemoTour() {
         clickSelector('[data-tour="route-sample-toggle"]')
       }
     }
+    if (currentStep.id === 'overview-fullmap') {
+      openOverviewFullMap()
+      return
+    }
     const selector = currentStep.doItSelector || currentStep.anchor
     if (!selector) return
     window.setTimeout(() => clickSelector(selector), currentStep.id === 'route-pick-sample' ? 200 : 0)
@@ -764,11 +850,8 @@ export default function DemoTour() {
   const yieldToDialog = appDialogOpen && currentStep?.id === 'route-cta-panel'
   const sheetPlacement = tipPos.placement
   const isSheetBottom =
-    sheetPlacement === 'sheet' || sheetPlacement === 'sheet-compact'
-  const isSheetTop =
-    sheetPlacement === 'sheet-top' || sheetPlacement === 'sheet-compact-top'
-  const isSheetCompact =
-    sheetPlacement === 'sheet-compact' || sheetPlacement === 'sheet-compact-top'
+    sheetPlacement === 'sheet'
+  const isSheetTop = sheetPlacement === 'sheet-top'
   const primaryLabel = isLastStep
     ? mode.full
       ? 'Finish'
@@ -973,13 +1056,12 @@ export default function DemoTour() {
                 ? ' is-sheet'
                 : '',
               isSheetTop ? ' is-sheet-top' : '',
-              isSheetCompact ? ' is-sheet-compact' : '',
               yieldToDialog ? ' is-yielding' : '',
             ].join('')}
             role="dialog"
             aria-modal={yieldToDialog ? 'false' : 'true'}
             aria-labelledby={titleId}
-            aria-describedby={isSheetCompact ? undefined : bodyId}
+            aria-describedby={bodyId}
             tabIndex={-1}
             data-tour-placement={sheetPlacement}
             data-tour-yield={yieldToDialog ? 'app-dialog' : undefined}
@@ -991,95 +1073,80 @@ export default function DemoTour() {
                   : { top: tipPos.top, left: tipPos.left }
             }
           >
-            {isSheetCompact ? (
-              <>
-                <h2 id={titleId} className="demo-tour-title">
-                  {currentStep.title}
-                </h2>
-                <div className="demo-tour-actions">
-                  <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                    {primaryLabel}
-                  </button>
-                </div>
-              </>
+            <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
+            <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
+            <p id={bodyId} className="demo-tour-body">{tipBody}</p>
+            <div className="demo-tour-meta-row">
+              <p className="demo-tour-meta">{stepMeta}</p>
+              <div className="demo-tour-text-links">
+                <button type="button" className="demo-tour-text-link" onClick={() => returnToGuides()}>
+                  All guides
+                </button>
+                <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
+                  Skip guide
+                </button>
+                <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
+                  Exit
+                </button>
+              </div>
+            </div>
+            {setupFallback ? (
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={() => returnToGuides()}>
+                  Back to guides
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                <button
+                  type="button"
+                  className="demo-tour-btn is-primary"
+                  onClick={() => startSection(setupFallback.ctaSection)}
+                >
+                  {setupFallback.ctaLabel}
+                </button>
+              </div>
+            ) : yieldToDialog ? (
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                  Back
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                <button
+                  type="button"
+                  className="demo-tour-btn is-primary"
+                  onClick={onClosePanelAndContinue}
+                >
+                  Close it and continue
+                </button>
+              </div>
             ) : (
-              <>
-                <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
-                <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
-                <p id={bodyId} className="demo-tour-body">{tipBody}</p>
-                <div className="demo-tour-meta-row">
-                  <p className="demo-tour-meta">{stepMeta}</p>
-                  <div className="demo-tour-text-links">
-                    <button type="button" className="demo-tour-text-link" onClick={() => returnToGuides()}>
-                      All guides
-                    </button>
-                    <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
-                      Skip guide
-                    </button>
-                    <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
-                      Exit
-                    </button>
-                  </div>
-                </div>
-                {setupFallback ? (
-                  <div className="demo-tour-actions">
-                    <button type="button" className="demo-tour-btn" onClick={() => returnToGuides()}>
-                      Back to guides
-                    </button>
-                    <span className="demo-tour-actions-spacer" />
-                    <button
-                      type="button"
-                      className="demo-tour-btn is-primary"
-                      onClick={() => startSection(setupFallback.ctaSection)}
-                    >
-                      {setupFallback.ctaLabel}
-                    </button>
-                  </div>
-                ) : yieldToDialog ? (
-                  <div className="demo-tour-actions">
-                    <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                      Back
-                    </button>
-                    <span className="demo-tour-actions-spacer" />
-                    <button
-                      type="button"
-                      className="demo-tour-btn is-primary"
-                      onClick={onClosePanelAndContinue}
-                    >
-                      Close it and continue
-                    </button>
-                  </div>
-                ) : (
-                  <div className="demo-tour-actions">
-                    <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                      Back
-                    </button>
-                    <span className="demo-tour-actions-spacer" />
-                    {isLastStep && (
-                      <button type="button" className="demo-tour-btn" onClick={() => backToGuides()}>
-                        Back to guides
-                      </button>
-                    )}
-                    {showDoIt && (
-                      <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
-                        {currentStep.doItLabel}
-                      </button>
-                    )}
-                    {isLastStep && currentStep.nextFlowCta && (
-                      <button
-                        type="button"
-                        className="demo-tour-btn"
-                        onClick={openNextFlowFromCloser}
-                      >
-                        {currentStep.nextFlowCta.label}
-                      </button>
-                    )}
-                    <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                      {primaryLabel}
-                    </button>
-                  </div>
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                  Back
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                {isLastStep && (
+                  <button type="button" className="demo-tour-btn" onClick={() => backToGuides()}>
+                    Back to guides
+                  </button>
                 )}
-              </>
+                {showDoIt && (
+                  <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
+                    {currentStep.doItLabel}
+                  </button>
+                )}
+                {isLastStep && currentStep.nextFlowCta && (
+                  <button
+                    type="button"
+                    className="demo-tour-btn"
+                    onClick={openNextFlowFromCloser}
+                  >
+                    {currentStep.nextFlowCta.label}
+                  </button>
+                )}
+                <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
+                  {primaryLabel}
+                </button>
+              </div>
             )}
           </div>
         </>

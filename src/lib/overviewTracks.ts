@@ -8,6 +8,26 @@ export const VERDICT_TRACK_COLORS: Record<OverviewVerdict, string> = {
   HOLD: '#DC2626',
 }
 
+/** Leaflet paint order: READY under VERIFY under HOLD; selected route above all. */
+const MAP_DRAW_RANK: Record<OverviewVerdict, number> = {
+  READY: 0,
+  VERIFY: 1,
+  HOLD: 2,
+}
+
+export function compareTracksForMapDrawOrder<T extends { id: string; status: OverviewVerdict | null }>(
+  a: T,
+  b: T,
+  selectedId?: string | null,
+): number {
+  const aSelected = a.id === selectedId ? 1 : 0
+  const bSelected = b.id === selectedId ? 1 : 0
+  if (aSelected !== bSelected) return aSelected - bSelected
+  const aRank = a.status ? MAP_DRAW_RANK[a.status] : -1
+  const bRank = b.status ? MAP_DRAW_RANK[b.status] : -1
+  return aRank - bRank
+}
+
 /** Permitted-route blue used by the Sample GPX legend. */
 export const SAMPLE_ROUTE_COLOR = '#0b57d0'
 
