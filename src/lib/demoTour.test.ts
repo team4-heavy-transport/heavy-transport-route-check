@@ -23,9 +23,11 @@ import {
   readTourProgress,
   resetTourProgress,
   sectionsCompletedByAdvance,
+  stepsForFullTour,
   stepsForSection,
   tourFlowEntries,
   writeTourProgress,
+  TOUR_FLOW_DESCRIPTIONS,
 } from './demoTour.ts'
 
 function fakeStorage() {
@@ -141,12 +143,13 @@ test('tour root portals to body with a top-most stacking layer', () => {
 })
 
 test('full tour walk marks every section complete', () => {
-  const done = completedSectionsAfterFullWalk(TOUR_STEPS)
+  const fullSteps = stepsForFullTour()
+  const done = completedSectionsAfterFullWalk(fullSteps)
   assert.deepEqual(done, [...TOUR_SECTION_ORDER])
 
   const storage = fakeStorage()
-  for (let i = 0; i < TOUR_STEPS.length; i++) {
-    for (const section of sectionsCompletedByAdvance(TOUR_STEPS, i, i + 1)) {
+  for (let i = 0; i < fullSteps.length; i++) {
+    for (const section of sectionsCompletedByAdvance(fullSteps, i, i + 1)) {
       markSectionComplete(section, storage)
     }
   }
@@ -215,7 +218,7 @@ test('flow picker list order and step counts derive from step definitions', () =
   assert.equal(flows.length, 1 + TOUR_SECTIONS.length)
   assert.equal(flows[0].id, 'full')
   assert.equal(flows[0].label, 'Full tour')
-  assert.equal(flows[0].stepCount, TOUR_STEPS.length)
+  assert.equal(flows[0].stepCount, stepsForFullTour().length)
   assert.ok(flows[0].description.trim().length > 0)
 
   const sectionFlows = flows.slice(1)
@@ -238,6 +241,53 @@ test('flow picker list order and step counts derive from step definitions', () =
   assert.equal(
     flowAccessibleName(jobs, true),
     `Jobs, ${jobs.stepCount} steps, done`,
+  )
+})
+
+test('Route check single flow ends on Job saved; full tour skips that closer', () => {
+  const routeSteps = stepsForSection('route-check')
+  assert.equal(routeSteps.length, 15)
+  assert.equal(routeSteps[routeSteps.length - 1]?.id, 'route-job-saved')
+  assert.equal(routeSteps[routeSteps.length - 2]?.id, 'route-save-submit')
+  assert.ok(routeSteps[routeSteps.length - 2]?.doItLabel)
+  assert.equal(routeSteps[routeSteps.length - 1]?.doItLabel, undefined)
+  assert.equal(routeSteps[routeSteps.length - 1]?.nextFlowCta?.section, 'jobs')
+
+  const fullSteps = stepsForFullTour()
+  assert.ok(!fullSteps.some(s => s.id === 'route-job-saved'))
+  assert.ok(!fullSteps.some(s => s.singleFlowOnly))
+  const routeInFull = fullSteps.filter(s => s.section === 'route-check')
+  assert.equal(routeInFull[routeInFull.length - 1]?.id, 'route-save-submit')
+  const saveIdx = fullSteps.findIndex(s => s.id === 'route-save-submit')
+  assert.ok(saveIdx >= 0)
+  assert.equal(fullSteps[saveIdx + 1]?.section, 'jobs')
+})
+
+test('final step of every single flow has no do-it action', () => {
+  for (const section of TOUR_SECTION_ORDER) {
+    const steps = stepsForSection(section)
+    const last = steps[steps.length - 1]
+    assert.ok(last, section)
+    assert.equal(
+      last.doItLabel,
+      undefined,
+      `${section} last step ${last.id} must not carry a do-it action`,
+    )
+  }
+})
+
+test('picker and step copy avoid CTA jargon', () => {
+  for (const [id, description] of Object.entries(TOUR_FLOW_DESCRIPTIONS)) {
+    assert.doesNotMatch(description, /\bCTA\b/, `${id} description`)
+  }
+  for (const step of TOUR_STEPS) {
+    assert.doesNotMatch(step.title, /\bCTA\b/, step.id)
+    assert.doesNotMatch(step.body, /\bCTA\b/, step.id)
+    if (step.bodyNarrow) assert.doesNotMatch(step.bodyNarrow, /\bCTA\b/, step.id)
+  }
+  assert.match(
+    TOUR_FLOW_DESCRIPTIONS.overview,
+    /where to import a route/i,
   )
 })
 

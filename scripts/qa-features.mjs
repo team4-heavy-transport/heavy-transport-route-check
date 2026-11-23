@@ -1361,7 +1361,7 @@ async function main() {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(200)
 
-    // Route check single-flow: reach Save the job and advance via Save job for me.
+    // Route check single-flow: Save the job advances to Job saved closer (not exit).
     await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded', timeout: 60000 })
     await ensureLoggedIn('Demo')
     if (await page.locator('.demo-tour-tooltip, .demo-tour-menu').count()) {
@@ -1371,26 +1371,37 @@ async function main() {
     await startGuideSection('Route check')
     const routeTip = page.locator('.demo-tour-tooltip')
     let reachedSaveJob = false
-    let advancedPastSave = false
+    let reachedJobSaved = false
     for (let i = 0; i < 24; i++) {
       if (!(await routeTip.count())) break
       await routeTip.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
       const title = ((await routeTip.locator('.demo-tour-title').textContent().catch(() => '')) || '').trim()
       if (title === 'Save the job') {
-        reachedSaveJob = true
         const saveForMe = routeTip.getByRole('button', { name: 'Save job for me' })
-        if (await saveForMe.count()) {
+        const continueBtn = routeTip.getByRole('button', { name: 'Continue' })
+        const doneOnSave = routeTip.getByRole('button', { name: 'Done' })
+        // Action step: Back + Save job for me + Continue — not a Done closer.
+        reachedSaveJob =
+          (await saveForMe.count()) > 0
+          && (await continueBtn.count()) > 0
+          && (await doneOnSave.count()) === 0
+        if (reachedSaveJob) {
           await saveForMe.click({ timeout: 10000 })
           await page.waitForFunction(() => {
             const el = document.querySelector('.demo-tour-tooltip .demo-tour-title')
-            if (!el) return true
-            return (el.textContent || '').trim() !== 'Save the job'
+            if (!el) return false
+            return (el.textContent || '').trim() === 'Job saved'
           }, { timeout: 15000 }).catch(() => {})
           const after = ((await routeTip.locator('.demo-tour-title').textContent().catch(() => '')) || '').trim()
-          const onJobs = page.url().includes('/jobs')
-            || /Jobs stay monitored|Jobs/i.test(after)
-            || !(await routeTip.count())
-          advancedPastSave = after !== 'Save the job' || onJobs
+          if (after === 'Job saved') {
+            const openJobs = routeTip.getByRole('button', { name: 'Open the Jobs guide' })
+            const backGuides = routeTip.getByRole('button', { name: 'Back to guides' })
+            const done = routeTip.getByRole('button', { name: 'Done' })
+            reachedJobSaved =
+              (await openJobs.count()) > 0
+              && (await backGuides.count()) > 0
+              && (await done.count()) > 0
+          }
         }
         break
       }
@@ -1399,9 +1410,9 @@ async function main() {
       await page.waitForTimeout(300)
     }
     record(
-      'Demo Route check flow reaches Save the job and advances after Save job for me',
-      reachedSaveJob && advancedPastSave,
-      JSON.stringify({ reachedSaveJob, advancedPastSave, url: page.url() }),
+      'Demo Route check flow reaches Save the job then Job saved closer',
+      reachedSaveJob && reachedJobSaved,
+      JSON.stringify({ reachedSaveJob, reachedJobSaved, url: page.url() }),
     )
     if (await page.locator('.demo-tour-tooltip, .demo-tour-menu').count()) {
       await page.keyboard.press('Escape')

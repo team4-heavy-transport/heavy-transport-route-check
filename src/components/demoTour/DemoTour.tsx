@@ -11,7 +11,6 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { BookOpen, Check } from 'lucide-react'
 import {
   TOUR_SECTIONS,
-  TOUR_STEPS,
   acknowledgeWelcome,
   dismissWelcome,
   flowAccessibleName,
@@ -23,6 +22,7 @@ import {
   resetTourProgress,
   sectionLabel,
   sectionsCompletedByAdvance,
+  stepsForFullTour,
   stepsForSection,
   tourFlowEntries,
   writeTourProgress,
@@ -57,10 +57,6 @@ type Mode =
   | { kind: 'welcome' }
   | { kind: 'menu' }
   | { kind: 'tour'; steps: TourStepDef[]; index: number; full: boolean }
-
-function stepsForFullTour(): TourStepDef[] {
-  return [...TOUR_STEPS]
-}
 
 const SHEET_FALLBACK_H = 280
 const FLOW_ENTRIES = tourFlowEntries()
@@ -206,6 +202,14 @@ export default function DemoTour() {
     },
     [location.pathname, navigate, persist, startSteps],
   )
+
+  const openNextFlowFromCloser = useCallback(() => {
+    if (mode.kind !== 'tour' || !currentStep?.nextFlowCta) return
+    const target = currentStep.nextFlowCta.section
+    const next = markSectionComplete(currentStep.section)
+    persist(next)
+    startSection(target)
+  }, [currentStep, mode, persist, startSection])
 
   const startFlow = useCallback(
     (flowId: TourFlowId) => {
@@ -723,16 +727,26 @@ export default function DemoTour() {
     </button>
   )
 
+  const sectionStepsForMeta =
+    mode.kind === 'tour' && currentStep
+      ? mode.full
+        ? mode.steps.filter(s => s.section === currentStep.section)
+        : stepsForSection(currentStep.section)
+      : []
   const sectionIndex = currentStep
-    ? stepsForSection(currentStep.section).findIndex(s => s.id === currentStep.id) + 1
+    ? sectionStepsForMeta.findIndex(s => s.id === currentStep.id) + 1
     : 0
-  const sectionTotal = currentStep ? stepsForSection(currentStep.section).length : 0
+  const sectionTotal = sectionStepsForMeta.length
 
   const verdict = currentStep?.id === 'route-cta' || currentStep?.id === 'route-cta-panel'
     ? readVerdictFromDom()
     : null
+  const isLastStep =
+    mode.kind === 'tour' && mode.index >= mode.steps.length - 1
+  // Final step of a guide never carries a do-it action (Back · Back to guides · Done).
   const showDoIt =
     Boolean(currentStep?.doItLabel) &&
+    !isLastStep &&
     !setupFallback &&
     !(currentStep?.id === 'route-cta' && verdict === 'READY')
   const readyCtaNext =
@@ -755,8 +769,6 @@ export default function DemoTour() {
     sheetPlacement === 'sheet-top' || sheetPlacement === 'sheet-compact-top'
   const isSheetCompact =
     sheetPlacement === 'sheet-compact' || sheetPlacement === 'sheet-compact-top'
-  const isLastStep =
-    mode.kind === 'tour' && mode.index >= mode.steps.length - 1
   const primaryLabel = isLastStep
     ? mode.full
       ? 'Finish'
@@ -1051,6 +1063,15 @@ export default function DemoTour() {
                     {showDoIt && (
                       <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
                         {currentStep.doItLabel}
+                      </button>
+                    )}
+                    {isLastStep && currentStep.nextFlowCta && (
+                      <button
+                        type="button"
+                        className="demo-tour-btn"
+                        onClick={openNextFlowFromCloser}
+                      >
+                        {currentStep.nextFlowCta.label}
                       </button>
                     )}
                     <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>

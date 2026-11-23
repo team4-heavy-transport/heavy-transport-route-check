@@ -78,12 +78,20 @@ export type TourStepDef = {
   doItLabel?: string
   /** Selector to click for "Do it for me" (defaults to anchor). */
   doItSelector?: string
+  /**
+   * Included in single-section guides only — omitted from the full tour
+   * (e.g. Route check closing confirmation before Jobs).
+   */
+  singleFlowOnly?: boolean
+  /** Last-step CTA that starts another guide (single-flow closers). */
+  nextFlowCta?: { label: string; section: TourSectionId }
 }
 
 /** One-line descriptions for the Guide flow picker. */
 export const TOUR_FLOW_DESCRIPTIONS: Record<'full' | TourSectionId, string> = {
   full: 'Walk every guide in order — Overview through Data partners.',
-  overview: 'See the dispatch home, import CTA, and demo vs sample modes.',
+  overview:
+    'See the dispatch home, where to import a route, and the demo vs sample views.',
   'route-check':
     'Pick a sample permit, run a live check, read the verdict, save it as a job.',
   jobs: 'Review monitored jobs, intervals, and edit a saved job card.',
@@ -293,6 +301,15 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     advance: { type: 'click' },
     doItLabel: 'Save job for me',
     doItSelector: '[data-tour="route-save-job-submit"]',
+  },
+  {
+    id: 'route-job-saved',
+    section: 'route-check',
+    title: 'Job saved',
+    body: 'Your check is now a job. Open Jobs to see it being monitored.',
+    route: '/jobs',
+    singleFlowOnly: true,
+    nextFlowCta: { label: 'Open the Jobs guide', section: 'jobs' },
   },
 
   // ── Jobs ──────────────────────────────────────────────────────────────
@@ -561,6 +578,11 @@ export function stepsForSection(section: TourSectionId): TourStepDef[] {
   return TOUR_STEPS.filter(step => step.section === section)
 }
 
+/** Full tour step list — excludes single-flow-only closing steps. */
+export function stepsForFullTour(): TourStepDef[] {
+  return TOUR_STEPS.filter(step => !step.singleFlowOnly)
+}
+
 /** Picker entries: Full tour first, then each section guide in order. */
 export function tourFlowEntries(): TourFlowEntry[] {
   return [
@@ -568,7 +590,7 @@ export function tourFlowEntries(): TourFlowEntry[] {
       id: 'full',
       label: 'Full tour',
       description: TOUR_FLOW_DESCRIPTIONS.full,
-      stepCount: TOUR_STEPS.length,
+      stepCount: stepsForFullTour().length,
     },
     ...TOUR_SECTIONS.map(section => ({
       id: section.id as TourFlowId,
@@ -648,7 +670,7 @@ export function sectionsCompletedByAdvance(
  * Used by unit tests and to keep Guide menu progress honest during a full tour.
  */
 export function completedSectionsAfterFullWalk(
-  steps: readonly TourStepDef[] = TOUR_STEPS,
+  steps: readonly TourStepDef[] = stepsForFullTour(),
 ): TourSectionId[] {
   const done = new Set<TourSectionId>()
   for (let i = 0; i < steps.length; i++) {
