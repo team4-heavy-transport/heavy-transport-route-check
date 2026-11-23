@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Home, Settings, Map, DatabaseZap, Route, ShieldAlert,
   Bell, Search, ChevronDown, X, Menu,
@@ -8,11 +8,13 @@ import {
 import RouteCheckLogo from './RouteCheckLogo'
 import MobileTabBar from './MobileTabBar'
 import UserChip from './UserChip'
+import { useAuth } from '../context/AuthContext'
 import { useRouteMonitoring } from '../context/RouteMonitoringContext'
 import { useJobs } from '../context/JobsContext'
 import { useOrgSettings } from '../context/OrgSettingsContext'
 import { flushPendingSaves } from '../lib/browserStore'
 import { SEARCH_EMPTY_HELP, searchAppData } from '../lib/appSearch'
+import { isDemoTourUser } from '../lib/demoTourGate'
 import { formatBerlinDateTime } from '../lib/formatTime'
 import {
   DRAWER_NAV_MAX_WIDTH_PX,
@@ -24,6 +26,8 @@ import {
   reduceNavChromeOpenMobile,
   reduceNavChromeViewportChange,
 } from '../lib/layoutNavChrome'
+
+const DemoTour = lazy(() => import('./demoTour/DemoTour'))
 
 const navItems = [
   { path: '/', label: 'Overview', icon: Home, exact: true },
@@ -73,9 +77,11 @@ export default function Layout() {
   const wasMobileOpenRef = useRef(false)
   const navigate = useNavigate()
   const location = useLocation()
+  const { user } = useAuth()
   const { alerts, history, unreadCount, acknowledgeAlert } = useRouteMonitoring()
   const { jobs } = useJobs()
   const { displayName, orgTypeLabel } = useOrgSettings()
+  const showDemoTour = isDemoTourUser(user?.id)
   const searchHits = useMemo(
     () => searchAppData({ query: searchQuery, jobs, history, alerts }),
     [alerts, history, jobs, searchQuery],
@@ -249,6 +255,14 @@ export default function Layout() {
               to={path}
               end={exact}
               aria-label={label}
+              data-tour={
+                path === '/route-checks' ? 'nav-route-checks'
+                  : path === '/jobs' ? 'nav-jobs'
+                    : path === '/map-explorer' ? 'nav-corridor'
+                      : path === '/activity' ? 'nav-alerts'
+                        : path === '/' ? 'nav-overview'
+                          : undefined
+              }
               data-tooltip={sidebarCollapsed ? label : undefined}
               className={`sidebar-link${sidebarCollapsed ? ' has-tooltip' : ''}`}
               onClick={() => setMobileOpen(false)}
@@ -277,6 +291,7 @@ export default function Layout() {
               key={path}
               to={path}
               aria-label={label}
+              data-tour="nav-data-partners"
               data-tooltip={sidebarCollapsed ? label : undefined}
               className={`sidebar-link${sidebarCollapsed ? ' has-tooltip' : ''}`}
               onClick={() => setMobileOpen(false)}
@@ -298,6 +313,7 @@ export default function Layout() {
           <NavLink
             to="/settings"
             aria-label="Settings"
+            data-tour="nav-settings"
             data-tooltip={sidebarCollapsed ? 'Settings' : undefined}
             className={`sidebar-link${sidebarCollapsed ? ' has-tooltip' : ''}`}
             onClick={() => setMobileOpen(false)}
@@ -347,7 +363,7 @@ export default function Layout() {
             <UserChip compact />
           </div>
           {/* Search */}
-          <div className="topbar-search" ref={searchRef} style={{
+          <div className="topbar-search" data-tour="chrome-search" ref={searchRef} style={{
             flex: 1,
             maxWidth: 360,
             display: 'flex',
@@ -414,7 +430,7 @@ export default function Layout() {
 
           {/* Actions */}
           <div className="topbar-actions" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div className="topbar-notifications" style={{ position: 'relative' }}>
+            <div className="topbar-notifications" data-tour="chrome-notifications" style={{ position: 'relative' }}>
               <button
                 onClick={() => setNotifOpen(!notifOpen)}
                 aria-label="Notifications"
@@ -492,6 +508,7 @@ export default function Layout() {
               )}
             </div>
 
+            {showDemoTour && <span data-tour="demo-guide-anchor" />}
             <div style={{ position: 'relative' }}>
               <button
                 className="topbar-help hover:!bg-black/[0.06] hover:!text-[var(--text-primary)]"
@@ -569,6 +586,12 @@ export default function Layout() {
       
       {/* Mobile bottom tab bar */}
       <MobileTabBar />
+
+      {showDemoTour && (
+        <Suspense fallback={null}>
+          <DemoTour />
+        </Suspense>
+      )}
     </div>
   )
 }

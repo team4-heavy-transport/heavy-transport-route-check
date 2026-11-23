@@ -521,7 +521,7 @@ export default function LiveMap() {
         </div>
       </header>
 
-      <div className="live-map-tabs" aria-label="Map scope and basemap">
+      <div className="live-map-tabs" aria-label="Map scope and basemap" data-tour="corridor-tabs">
         <div className="segmented" role="tablist" aria-label="Map scope">
           <button type="button" role="tab" aria-selected={scope === 'national'} className={scope === 'national' ? 'active' : ''} onClick={() => setScope('national')}>
             <MapIcon size={13} /> Germany
@@ -539,12 +539,12 @@ export default function LiveMap() {
 
       <div className="live-map-workspace">
         <aside className="live-event-panel">
-          <div className="live-event-search">
+          <div className="live-event-search" data-tour="corridor-search">
             <Search size={14} />
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search road or place…" />
             {query && <button type="button" onClick={() => setQuery('')}><XCircle size={13} /></button>}
           </div>
-          <div className="live-event-summary" data-testid="corridor-event-summary" role="group" aria-label="Live Autobahn signal counts">
+          <div className="live-event-summary" data-testid="corridor-event-summary" role="group" aria-label="Live Autobahn signal counts" data-tour="corridor-filters">
             <button
               type="button"
               className={soleActiveLayer === 'closures' ? 'active' : ''}
@@ -590,7 +590,7 @@ export default function LiveMap() {
               </dl>
             </div>
           )}
-          <div className="live-event-list">
+          <div className="live-event-list" data-tour="corridor-events">
             <div className="live-event-list-heading"><span>Operational evidence</span><b>{visibleEvents.length} matched</b></div>
             {listedEvents.map(event => {
               const meta = eventMeta[event.type]
@@ -616,7 +616,7 @@ export default function LiveMap() {
           <div ref={mapContainer} className="maplibre-map" data-testid="corridor-map" aria-label="Interactive live mobility map of Germany" />
 
           <div className="live-map-end-stack">
-            <section className={`live-layer-panel ${layerPanelOpen ? 'open' : ''}`}>
+            <section className={`live-layer-panel ${layerPanelOpen ? 'open' : ''}`} data-tour="corridor-layers">
               <button type="button" className="layer-panel-heading" onClick={() => setLayerPanelOpen(open => !open)}>
                 <span><Layers3 size={14} /> Layers</span><ChevronDown size={13} />
               </button>

@@ -142,13 +142,14 @@ export default function MarketplaceOverview() {
   return (
     <div className="market-page transport-overview">
       <PageHeader
+        tourId="overview-hero"
         eyebrow="Heavy transport operations"
         title="Know whether the permitted route is usable"
         description="Check the exact approved route against current roadworks, closures, and trusted on-site reports before the transport departs."
         actions={
           <>
-            <Link to="/map-explorer" className="market-button secondary"><Map size={16} /> Open route monitor</Link>
-            <Link to="/route-checks" className="market-button primary"><Upload size={16} /> Import permitted route</Link>
+            <Link to="/map-explorer" className="market-button secondary" data-tour="overview-cta-map"><Map size={16} /> Open route monitor</Link>
+            <Link to="/route-checks" className="market-button primary" data-tour="overview-cta-import"><Upload size={16} /> Import permitted route</Link>
           </>
         }
       />
@@ -225,8 +226,9 @@ export default function MarketplaceOverview() {
       <div
         className={`overview-mode-panel ${sampleMode === 'permits' ? 'is-sample' : 'is-demo'}`}
         data-overview-mode={sampleMode === 'permits' ? 'sample' : 'demo'}
+        data-tour="overview-mode-panel"
       >
-        <div className="overview-mode-banner">
+        <div className="overview-mode-banner" data-tour="overview-mode-banner">
           <div className="overview-mode-banner-copy" role="status">
             <span className="overview-mode-badge">
               {sampleMode === 'permits' ? <FileText size={13} aria-hidden /> : <Play size={13} aria-hidden />}
@@ -243,9 +245,9 @@ export default function MarketplaceOverview() {
 
         {sampleMode === 'example' ? (
           <div role="tabpanel" id="overview-panel-demo" aria-labelledby="overview-tab-demo">
-            <section className="transport-readiness">
+            <section className="transport-readiness" data-tour="overview-next-transport">
               <div className="transport-readiness-copy">
-                <div className="transport-route-heading">
+                <div className="transport-route-heading" data-tour="overview-next-heading">
                   <span className="transport-icon"><Truck size={20} /></span>
                   <div>
                     <span className="market-eyebrow">Next transport · Permit {featuredPermit.permitNumber}</span>
@@ -278,7 +280,7 @@ export default function MarketplaceOverview() {
 
             <OverviewTallies permits={overviewPermits} />
 
-            <section className="transport-workflow" aria-label="Heavy transport route monitoring workflow">
+            <section className="transport-workflow" aria-label="Heavy transport route monitoring workflow" data-tour="overview-workflow">
               <div><span>1</span><FileJson size={18} /><strong>Import the permit</strong><p>Upload the exact VEMAGS route and approved transport dimensions.</p></div>
               <ArrowRight size={18} />
               <div><span>2</span><Route size={18} /><strong>Check the route</strong><p>Compare only the approved route with current restrictions and roadworks.</p></div>
@@ -287,8 +289,8 @@ export default function MarketplaceOverview() {
             </section>
 
             <div className="market-two-column">
-              <section className="market-section">
-                <div className="market-section-header compact">
+              <section className="market-section" data-tour="overview-upcoming-routes">
+                <div className="market-section-header compact" data-tour="overview-upcoming-heading">
                   <div><span className="market-eyebrow">Dispatch queue</span><h2>Upcoming permitted routes</h2></div>
                   <Link to="/route-checks">New route check <ArrowRight size={16} /></Link>
                 </div>
@@ -386,7 +388,7 @@ export default function MarketplaceOverview() {
               </div>
             </section>
 
-            <section className="transport-workflow" aria-label="Heavy transport route monitoring workflow">
+            <section className="transport-workflow" aria-label="Heavy transport route monitoring workflow" data-tour="overview-workflow">
               <div><span>1</span><FileJson size={18} /><strong>Import the permit</strong><p>Upload the exact VEMAGS route and approved transport dimensions.</p></div>
               <ArrowRight size={18} />
               <div><span>2</span><Route size={18} /><strong>Check the route</strong><p>Compare only the approved route with current restrictions and roadworks.</p></div>

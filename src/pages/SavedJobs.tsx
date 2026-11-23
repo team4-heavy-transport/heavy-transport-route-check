@@ -92,7 +92,7 @@ export default function SavedJobs() {
       />
       <p className="storage-note activity-storage-note">Jobs are saved to your account and stay with you when you switch devices (same login).</p>
 
-      <section className="jobs-monitor-banner" role="note">
+      <section className="jobs-monitor-banner" role="note" data-tour="jobs-monitor-banner">
         <Clock3 size={18} />
         <div>
           <strong>{monitoringActive ? `${monitoredCount} job${monitoredCount === 1 ? '' : 's'} monitored in this tab` : 'No jobs currently monitored'}</strong>
@@ -106,7 +106,7 @@ export default function SavedJobs() {
         </button>
       </section>
 
-      <section className="jobs-prefs-card">
+      <section className="jobs-prefs-card" data-tour="jobs-prefs">
         <h2>Monitoring while this tab is open</h2>
         <div className="jobs-prefs-grid">
           <label>
@@ -138,7 +138,7 @@ export default function SavedJobs() {
           const monitoring = shouldMonitorJob(job)
           const departed = Boolean(job.plannedDeparture) && !isFutureDeparture(job)
           return (
-            <article className={`job-row ${job.lastVerdict ? `severity-${job.lastVerdict.toLowerCase()}` : ''}`} key={job.id} data-job-id={job.id}>
+            <article className={`job-row ${job.lastVerdict ? `severity-${job.lastVerdict.toLowerCase()}` : ''}`} key={job.id} data-job-id={job.id} data-tour="jobs-card">
               <div className="job-row-main">
                 <div>
                   <span className="route-alert-meta">
@@ -166,10 +166,10 @@ export default function SavedJobs() {
                   <button type="button" className="btn-primary" onClick={() => navigate(`/route-checks?job=${job.id}&run=1`)}>
                     <Play size={15} /> Re-run check
                   </button>
-                  <button type="button" className="btn-secondary" onClick={() => openEdit(job)}>
+                  <button type="button" className="btn-secondary" data-tour="jobs-edit" onClick={() => openEdit(job)}>
                     <Pencil size={15} /> Edit
                   </button>
-                  <button type="button" className="btn-secondary" onClick={() => setConfirmId(job.id)}>
+                  <button type="button" className="btn-secondary" data-tour="jobs-delete" onClick={() => setConfirmId(job.id)}>
                     <Trash2 size={15} /> Delete
                   </button>
                 </div>

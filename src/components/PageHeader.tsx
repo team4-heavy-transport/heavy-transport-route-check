@@ -3,14 +3,17 @@ export default function PageHeader({
   title,
   description,
   actions,
+  tourId,
 }: {
   eyebrow?: string
   title: string
   description: string
   actions?: React.ReactNode
+  /** Optional tour anchor — attribute-only; undefined omits the attr. */
+  tourId?: string
 }) {
   return (
-    <header className="market-page-header">
+    <header className="market-page-header" data-tour={tourId}>
       <div>
         {eyebrow && <span className="market-eyebrow">{eyebrow}</span>}
         <h1>{title}</h1>

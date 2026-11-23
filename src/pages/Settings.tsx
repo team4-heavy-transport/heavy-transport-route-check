@@ -90,9 +90,9 @@ export default function Settings() {
               {complete && <span className="verified-badge">Verification pending</span>}
             </div>
           </div>
-          <nav ref={tabsRef} aria-label="Settings" className="settings-tabs">
+          <nav ref={tabsRef} aria-label="Settings" className="settings-tabs" data-tour="settings-tabs">
             {tabs.map(({ id, label, icon: Icon }) => (
-              <button type="button" key={id} onClick={() => setActiveTab(id)} className={activeTab === id ? 'active' : ''}>
+              <button type="button" key={id} onClick={() => setActiveTab(id)} className={activeTab === id ? 'active' : ''} data-tour={`settings-tab-${id}`}>
                 <span><Icon size={16} /></span><strong>{label}</strong>
               </button>
             ))}
@@ -156,7 +156,7 @@ export default function Settings() {
               </div>
               <footer className="settings-card-footer">
                 <p>{footerStatus} Settings are saved to your account.</p>
-                <button type="button" onClick={save} disabled={!dirty}><Save size={16} /> Save changes</button>
+                <button type="button" data-tour="settings-save" onClick={save} disabled={!dirty}><Save size={16} /> Save changes</button>
               </footer>
             </section>
           )}

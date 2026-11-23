@@ -1,0 +1,505 @@
+/* Demo-only guided tour — loaded only via the lazy DemoTour chunk.
+   Portaled to document.body. Vars live on this root so overlay/tip inherit them
+   (nested body portals previously left z-index vars unresolved, so tips painted
+   under .live-event-panel's grid stacking context). */
+
+.demo-tour-root {
+  --demo-tour-pad: 12px;
+  --demo-tour-sheet-max: 320px;
+  /* Beat MapLibre / live-map stacking without touching map CSS. */
+  --demo-tour-z-overlay: 2147483000;
+  --demo-tour-z-tooltip: 2147483010;
+  --demo-tour-z-welcome: 2147483020;
+  --demo-tour-z-menu: 2147483015;
+  --demo-tour-z-launcher: 40;
+  --demo-tour-dim: rgb(0 0 0 / 0.28);
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .demo-tour-root {
+    --demo-tour-dim: rgb(0 0 0 / 0.5);
+  }
+}
+
+.demo-tour-root * {
+  box-sizing: border-box;
+}
+
+.demo-tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--demo-tour-z-overlay);
+  pointer-events: auto;
+  background: var(--demo-tour-dim);
+}
+
+.demo-tour-spotlight {
+  position: fixed;
+  z-index: calc(var(--demo-tour-z-overlay) + 1);
+  pointer-events: none;
+  border-radius: 10px;
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  background: transparent;
+}
+
+.demo-tour-spotlight.is-interactive {
+  pointer-events: none;
+}
+
+/* Dim outside the spotlight; target hole stays undimmed and clickable. */
+.demo-tour-clickshield {
+  position: fixed;
+  z-index: var(--demo-tour-z-overlay);
+  pointer-events: auto;
+  background: var(--demo-tour-dim);
+}
+
+.demo-tour-tooltip {
+  position: fixed;
+  z-index: var(--demo-tour-z-tooltip);
+  pointer-events: auto;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 16px 16px 14px;
+  border-radius: 14px;
+  border: var(--hairline);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+
+.demo-tour-tooltip.is-sheet {
+  left: 12px !important;
+  right: 12px !important;
+  width: auto !important;
+  bottom: calc(56px + var(--safe-area-inset-bottom, 0px)) !important;
+  top: auto !important;
+  max-height: min(36vh, 280px);
+  padding: 12px 14px 10px;
+}
+
+.demo-tour-tooltip.is-sheet-top {
+  left: 12px !important;
+  right: 12px !important;
+  width: auto !important;
+  top: calc(56px + 8px) !important;
+  bottom: auto !important;
+  max-height: min(36vh, 280px);
+  padding: 12px 14px 10px;
+}
+
+/* One-line fallback when neither full edge clears the spotlight. */
+.demo-tour-tooltip.is-sheet-compact {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  max-height: none;
+  overflow: hidden;
+  padding: 8px 10px;
+}
+
+.demo-tour-tooltip.is-sheet-compact .demo-tour-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.demo-tour-tooltip.is-sheet-compact .demo-tour-actions {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.demo-tour-tooltip.is-sheet-compact .demo-tour-actions-spacer,
+.demo-tour-tooltip.is-sheet-compact .demo-tour-btn:not(.is-primary) {
+  display: none;
+}
+
+.demo-tour-tooltip.is-yielding {
+  z-index: var(--demo-tour-z-tooltip);
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(40vh, 240px);
+  opacity: 0.96;
+}
+
+.demo-tour-tooltip.is-sheet .demo-tour-title,
+.demo-tour-tooltip.is-sheet-top .demo-tour-title {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.demo-tour-tooltip.is-sheet.is-sheet-compact .demo-tour-title,
+.demo-tour-tooltip.is-sheet-top.is-sheet-compact .demo-tour-title {
+  font-size: 15px;
+  margin-bottom: 0;
+}
+
+.demo-tour-tooltip.is-sheet .demo-tour-body,
+.demo-tour-tooltip.is-sheet-top .demo-tour-body {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.demo-tour-eyebrow {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.demo-tour-title {
+  margin: 0 0 8px;
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+
+.demo-tour-body {
+  margin: 0 0 12px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.demo-tour-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin: 0 0 12px;
+}
+
+.demo-tour-meta {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-tertiary);
+}
+
+.demo-tour-text-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  justify-content: flex-end;
+  align-items: center;
+  margin-left: auto;
+}
+
+.demo-tour-text-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 10px 8px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.2;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.demo-tour-text-link:hover {
+  color: var(--text-primary);
+}
+
+.demo-tour-text-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.demo-tour-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.demo-tour-actions-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+
+.demo-tour-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 560;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.demo-tour-btn:hover {
+  background: var(--bg-fill);
+}
+
+.demo-tour-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.demo-tour-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.demo-tour-btn.is-primary {
+  border-color: var(--accent-button);
+  background: var(--accent-button);
+  color: var(--text-on-accent);
+}
+
+.demo-tour-btn.is-primary:hover {
+  background: var(--accent-button-hover);
+}
+
+.demo-tour-btn.is-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.demo-tour-btn.is-ghost:hover {
+  background: var(--bg-fill);
+  color: var(--text-primary);
+}
+
+.demo-tour-sr-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Welcome */
+.demo-tour-welcome-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--demo-tour-z-welcome);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  pointer-events: auto;
+  background: color-mix(in srgb, var(--text-primary) 45%, transparent);
+}
+
+.demo-tour-welcome {
+  width: min(420px, 100%);
+  padding: 28px 24px 20px;
+  border-radius: 16px;
+  border: var(--hairline);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-xl);
+  outline: none;
+}
+
+.demo-tour-welcome .demo-tour-title {
+  font-size: 26px;
+}
+
+.demo-tour-welcome .demo-tour-actions {
+  margin-top: 8px;
+}
+
+/* Guide launcher (ported into header slot) */
+.demo-tour-launcher {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 560;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.demo-tour-launcher:hover,
+.demo-tour-launcher[aria-expanded='true'] {
+  background: var(--bg-fill);
+  color: var(--text-primary);
+}
+
+.demo-tour-launcher:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.demo-tour-launcher-label {
+  display: none;
+}
+
+@media (min-width: 720px) {
+  .demo-tour-launcher-label {
+    display: inline;
+  }
+}
+
+/* Guide menu */
+.demo-tour-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--demo-tour-z-menu) - 1);
+  pointer-events: auto;
+  background: transparent;
+}
+
+.demo-tour-menu {
+  position: fixed;
+  z-index: var(--demo-tour-z-menu);
+  pointer-events: auto;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  overflow: auto;
+  padding: 10px;
+  border-radius: 14px;
+  border: var(--hairline);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-lg);
+  outline: none;
+}
+
+.demo-tour-menu-title {
+  margin: 6px 8px 10px;
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 560;
+  color: var(--text-primary);
+}
+
+.demo-tour-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.demo-tour-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 520;
+  text-align: left;
+  cursor: pointer;
+}
+
+.demo-tour-menu-item:hover {
+  background: var(--bg-fill);
+}
+
+.demo-tour-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.demo-tour-menu-status {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-tertiary);
+}
+
+.demo-tour-menu-status.is-done {
+  color: var(--ready-text, var(--green-text, var(--text-secondary)));
+}
+
+.demo-tour-menu-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+
+@media (min-width: 721px) {
+  .demo-tour-text-link {
+    min-height: 32px;
+    padding: 6px 8px;
+  }
+}
+
+@media (max-width: 720px) {
+  .demo-tour-actions {
+    flex-wrap: nowrap;
+  }
+
+  .demo-tour-actions .demo-tour-btn {
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  .demo-tour-text-link {
+    min-height: 44px;
+    padding: 12px 8px;
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-tour-tooltip,
+  .demo-tour-spotlight,
+  .demo-tour-welcome,
+  .demo-tour-menu,
+  .demo-tour-launcher {
+    transition: none !important;
+  }
+}
