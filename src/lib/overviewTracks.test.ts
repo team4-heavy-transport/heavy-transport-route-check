@@ -88,7 +88,7 @@ test('overview line colours match the Ready / Verify / Hold legend', () => {
   assert.equal(SAMPLE_ROUTE_COLOR, '#0b57d0')
 })
 
-test('featured hero transport is a route drawn on the overview map', () => {
+test('featured hero transport config stays available for demo helpers', () => {
   const featured = getOverviewFeatured()
   assert.equal(OVERVIEW_FEATURED_PERMIT_ID, 'munchen-stuttgart')
   assert.equal(featured.permit.id, 'munchen-stuttgart')
@@ -98,8 +98,8 @@ test('featured hero transport is a route drawn on the overview map', () => {
   assert.ok(OVERVIEW_MONITOR_ROUTES.some(route => route.id === featured.permit.id))
   const overview = readFileSync('src/pages/MarketplaceOverview.tsx', 'utf8')
   assert.equal(overview.includes("getPermittedRoute('duisburg-munich')"), false)
-  assert.ok(overview.includes('OVERVIEW_FEATURED_PERMIT_ID'))
-  assert.ok(overview.includes('highlightPermitId'))
+  assert.ok(overview.includes('buildOverviewRoutes'))
+  assert.ok(overview.includes('OverviewRoutesMap'))
 })
 
 test('downsample keeps endpoints and a shorter line', () => {
@@ -115,5 +115,5 @@ test('overview and sample maps no longer use the illustrated Germany heatmap', (
   assert.equal(overview.includes('MobilityHeatmap'), false)
   assert.equal(overview.includes('germanyOutline'), false)
   assert.equal(overview.includes('Hamburg, Bremen, Leipzig, Duisburg, München'), false)
-  assert.ok(overview.includes('LazyPermitMap'))
+  assert.ok(overview.includes('OverviewRoutesMap'))
 })

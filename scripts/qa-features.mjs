@@ -577,213 +577,114 @@ async function main() {
   const skipAfterMobileNav = page.getByRole('button', { name: /skip/i })
   if (await skipAfterMobileNav.count()) await skipAfterMobileNav.first().click().catch(() => {})
 
-  await page.locator('.overview-mode-panel').scrollIntoViewIfNeeded()
-  await page.locator('.permit-leaflet-map.leaflet-container').waitFor({ timeout: 25000 })
-  const demoMapCount = await page.locator('.permit-leaflet-map.leaflet-container').count()
-  record('Demo dashboard has exactly one Leaflet map', demoMapCount === 1, `count=${demoMapCount}`)
-  const heroBadge = await page.locator('.permit-map-badge strong').innerText()
-  record('Homepage hero uses Demo: 4 monitored routes badge', heroBadge.includes('Demo: 4 monitored routes'), heroBadge)
+  // Redesigned Overview: workflow strip, Check new route, filters, route block, full-size map.
+  await page.getByRole('heading', { name: 'Overview', exact: true }).waitFor({ timeout: 15000 })
+  record('Overview page has accessible h1', await page.getByRole('heading', { name: 'Overview', exact: true }).isVisible())
   record(
-    'Demo dashboard tab is selected on load',
-    (await page.getByRole('tab', { name: 'Demo dashboard' }).getAttribute('aria-selected')) === 'true',
+    'Overview keeps the 3-step workflow strip',
+    await page.locator('.transport-workflow[data-tour="overview-workflow"]').isVisible(),
   )
-  record('Demo mode shows DEMO badge', (await page.locator('.overview-mode-badge').innerText()).includes('DEMO'))
+  const checkNew = page.locator('[data-tour="overview-check-new"]')
+  await checkNew.waitFor({ timeout: 10000 })
+  const checkNewBox = await checkNew.boundingBox()
   record(
-    'Demo mode copy explains it is not live',
-    await page.getByText(/Made-up routes and verdicts, never live, never saved/i).isVisible(),
+    'Check new route CTA is prominent (≥52px tall)',
+    Boolean(checkNewBox && checkNewBox.height >= 52),
+    JSON.stringify(checkNewBox),
   )
-  const osmAttr = await page.locator('.permit-leaflet-map .leaflet-control-attribution').innerText()
-  record('Homepage map keeps OSM attribution', /OpenStreetMap/i.test(osmAttr), osmAttr)
-  const tileDisplay = await page.locator('.permit-leaflet-map .leaflet-tile-pane').evaluate(el => getComputedStyle(el).display)
-  record('Homepage map shows tile layer', tileDisplay !== 'none', tileDisplay)
   record(
-    'Homepage hero is not the illustrated Germany map',
-    (await page.locator('.transport-readiness-map .shared-leaflet-map').count()) === 0,
+    'Check new route links to /route-checks',
+    ((await checkNew.getAttribute('href')) || '').includes('/route-checks'),
   )
-  const heroCard = await page.locator('.transport-readiness-copy').innerText()
-  record(
-    'Hero card matches a drawn route, not Duisburg→Munich',
-    /München|Stuttgart/.test(heroCard) && !/Duisburg Logistics/.test(heroCard),
-    heroCard.replace(/\s+/g, ' ').slice(0, 180),
-  )
-  const tileFilter = await page.locator('.permit-leaflet-map .leaflet-tile-pane').evaluate(el => getComputedStyle(el).filter)
-  record('Homepage tiles are desaturated', /grayscale/i.test(tileFilter), tileFilter)
 
-  async function assertOverviewTalliesVisible(width, height) {
+  await page.locator('[data-tour="overview-filters"]').waitFor({ timeout: 10000 })
+  const listBefore = await page.locator('[data-tour="overview-route-list"] a, [data-tour="overview-route-list"] button').count()
+  const blockBefore = await page.locator('[data-tour="overview-route-cards"] .overview-route-card').count()
+  record('Overview shows a route list', listBefore > 0, `list=${listBefore}`)
+  record('Overview route block card count matches list', blockBefore === listBefore, `list=${listBefore} block=${blockBefore}`)
+
+  const holdChip = page.locator('[data-tour="overview-filters"] button', { hasText: /Hold departure/i })
+  if (await holdChip.count()) {
+    await holdChip.first().click()
+    await page.waitForTimeout(200)
+    const listAfter = await page.locator('[data-testid="overview-filter-count"]').innerText()
+    const blockAfter = await page.locator('[data-tour="overview-route-cards"] .overview-route-card').count()
+    const listCountAfter = Number((listAfter.match(/Showing (\d+)/) || [])[1] || -1)
+    record(
+      'Status filter updates list and block counts together',
+      listCountAfter === blockAfter,
+      `meta=${listAfter} block=${blockAfter}`,
+    )
+    const clear = page.getByRole('button', { name: 'Clear filters' })
+    if (await clear.count()) await clear.first().click()
+  }
+
+  const showBtn = page.locator('.overview-route-card .overview-route-show').first()
+  await showBtn.waitFor({ timeout: 10000 })
+  await showBtn.scrollIntoViewIfNeeded()
+  await showBtn.click()
+  await page.waitForFunction(() => {
+    const btn = document.querySelector('.overview-route-card .overview-route-show')
+    return btn && btn.getAttribute('aria-expanded') === 'true'
+  }, null, { timeout: 5000 }).catch(() => {})
+  record(
+    'Show toggle sets aria-expanded true',
+    (await showBtn.getAttribute('aria-expanded')) === 'true',
+  )
+  await showBtn.click()
+  await page.waitForFunction(() => {
+    const btn = document.querySelector('.overview-route-card .overview-route-show')
+    return btn && btn.getAttribute('aria-expanded') === 'false'
+  }, null, { timeout: 5000 }).catch(() => {})
+  record(
+    'Show toggle can collapse (aria-expanded false)',
+    (await showBtn.getAttribute('aria-expanded')) === 'false',
+  )
+
+  await page.locator('[data-overview-map="overview-block-map"] .leaflet-container').waitFor({ timeout: 25000 })
+  const osmAttr = await page.locator('[data-overview-map="overview-block-map"] .leaflet-control-attribution').innerText()
+  record('Overview block map keeps OSM attribution', /OpenStreetMap/i.test(osmAttr), osmAttr)
+
+  const fullOpen = page.locator('[data-tour="overview-fullmap-open"]')
+  await fullOpen.click()
+  await page.locator('[data-testid="overview-fullmap"]').waitFor({ timeout: 10000 })
+  record('Full-size map opens as dialog', await page.locator('[data-testid="overview-fullmap"][role="dialog"]').isVisible())
+  await page.getByRole('tab', { name: 'Single route' }).click()
+  record(
+    'Single-route mode shows vehicle / alerts / last checked',
+    (await page.locator('[data-testid="overview-fullmap-vehicle"], [data-testid="overview-fullmap-alerts"], [data-testid="overview-fullmap-checked"]').count()) >= 2,
+  )
+  await page.locator('[data-tour="overview-fullmap-minimise"]').click()
+  await page.locator('[data-testid="overview-fullmap"]').waitFor({ state: 'detached', timeout: 10000 })
+  const focusBack = await page.evaluate(() => {
+    const el = document.activeElement
+    return Boolean(el && el.getAttribute('data-tour') === 'overview-fullmap-open')
+  })
+  record('Minimise returns focus to Full-size map button', focusBack)
+
+  for (const [width, height] of [[375, 667], [390, 844]]) {
     await page.setViewportSize({ width, height })
     await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
     const skip = page.getByRole('button', { name: /skip/i })
     if (await skip.count()) await skip.first().click().catch(() => {})
-    await page.getByRole('tab', { name: 'Demo dashboard' }).click()
-    await page.locator('[data-permit-map="overview"]').waitFor({ timeout: 25000 })
-    const tallies = page.locator('.overview-tallies')
-    await tallies.waitFor({ timeout: 10000 })
-    await tallies.scrollIntoViewIfNeeded()
-    // Keep the tallies center clear of sticky chrome for elementFromPoint
-    await page.evaluate(() => {
-      const el = document.querySelector('.overview-tallies')
-      if (!el) return
-      const rect = el.getBoundingClientRect()
-      const cy = rect.top + rect.height / 2
-      const target = window.innerHeight * 0.45
-      window.scrollBy(0, cy - target)
-    })
-    const visibility = await tallies.evaluate(el => {
-      const rect = el.getBoundingClientRect()
-      const cx = rect.left + rect.width / 2
-      const cy = rect.top + rect.height / 2
-      const hit = document.elementFromPoint(cx, cy)
-      const hitOk = Boolean(hit && (hit === el || el.contains(hit)))
-      const workflow = document.querySelector('.transport-workflow')
-      let intersectsWorkflow = false
-      if (workflow) {
-        const wr = workflow.getBoundingClientRect()
-        intersectsWorkflow = !(
-          rect.right <= wr.left
-          || rect.left >= wr.right
-          || rect.bottom <= wr.top
-          || rect.top >= wr.bottom
-        )
-      }
+    const overflow = await page.evaluate(() => {
+      const root = document.querySelector('.transport-overview') || document.body
       return {
-        hitOk,
-        intersectsWorkflow,
-        hitTag: hit ? hit.tagName : null,
-        hitClass: hit && 'className' in hit ? String(hit.className).slice(0, 80) : null,
-        talliesTop: Math.round(rect.top),
-        talliesBottom: Math.round(rect.bottom),
+        scrollWidth: root.scrollWidth,
+        clientWidth: root.clientWidth,
+        docOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
       }
     })
     record(
-      `Overview tallies visible (elementFromPoint) at ${width}×${height}`,
-      visibility.hitOk,
-      JSON.stringify(visibility),
-    )
-    record(
-      `Overview tallies do not intersect .transport-workflow at ${width}×${height}`,
-      !visibility.intersectsWorkflow,
-      JSON.stringify(visibility),
+      `Overview has no horizontal overflow at ${width}×${height}`,
+      !overflow.docOverflow && overflow.scrollWidth <= overflow.clientWidth + 1,
+      JSON.stringify(overflow),
     )
   }
-  await assertOverviewTalliesVisible(1440, 900)
-  await assertOverviewTalliesVisible(390, 844)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
-  const skipAfterTallies = page.getByRole('button', { name: /skip/i })
-  if (await skipAfterTallies.count()) await skipAfterTallies.first().click().catch(() => {})
-  await page.getByRole('tab', { name: 'Demo dashboard' }).click()
-  await page.locator('[data-permit-map="overview"]').waitFor({ timeout: 25000 })
-
-  await page.getByRole('tab', { name: 'Try a sample permit' }).click()
-  record(
-    'Sample permit tab is selected',
-    (await page.getByRole('tab', { name: 'Try a sample permit' }).getAttribute('aria-selected')) === 'true',
-  )
-  record('Sample mode shows SAMPLE PERMIT badge', (await page.locator('.overview-mode-badge').innerText()).includes('SAMPLE PERMIT'))
-  record(
-    'Sample mode copy explains live check is saved',
-    await page.getByText(/that check is saved to your history/i).isVisible(),
-  )
-  record(
-    'Sample mode CTA runs a live check',
-    await page.getByRole('link', { name: /Run live check on this sample/i }).isVisible(),
-  )
-  const sampleMap = page.locator('[data-permit-map="sample"]')
-  await sampleMap.waitFor({ timeout: 15000 })
-  await page.locator('[data-permit-map="overview"]').waitFor({ state: 'detached', timeout: 10000 }).catch(() => {})
-  const sampleMapCount = await page.locator('.permit-leaflet-map.leaflet-container').count()
-  record('Sample permit panel has exactly one Leaflet map', sampleMapCount === 1, `count=${sampleMapCount}`)
-  record(
-    'Sample permit panel defaults to Hamburg→Hannover',
-    (await page.locator('[data-permit-map="sample"][data-selected-permit="hamburg-hannover"]').count()) > 0,
-  )
-  await sampleMap.locator('.permit-map-pill small', { hasText: /^START$/ }).waitFor({ timeout: 20000 })
-  await page.waitForFunction(() => {
-    const labels = [...document.querySelectorAll('[data-permit-map="sample"] .permit-map-pill strong')]
-      .map(node => (node.textContent || '').trim())
-    return labels.length === 2 && labels.some(text => /Hamburg/i.test(text)) && labels.some(text => /Hannover/i.test(text))
-  }, { timeout: 20000 })
-  const hamburgLabels = await sampleMap.locator('.permit-map-pill strong').allInnerTexts()
-  record(
-    'Hamburg→Hannover map labels match the selected permit',
-    hamburgLabels.length === 2
-      && hamburgLabels.some(text => /Hamburg/i.test(text))
-      && hamburgLabels.some(text => /Hannover/i.test(text))
-      && !hamburgLabels.some(text => /Munich|München/i.test(text)),
-    hamburgLabels.join(' | '),
-  )
-  record(
-    'Fake Duisburg→Munich sample-corridor caption is gone',
-    (await page.getByText('Hamburg, Bremen, Leipzig, Duisburg, München').count()) === 0,
-  )
-
-  await page.getByRole('button', { name: /Bremen → Dortmund/ }).click()
-  await page.locator('[data-permit-map="sample"][data-selected-permit="bremen-dortmund"]').waitFor({ timeout: 10000 })
-  await page.waitForFunction(() => {
-    const labels = [...document.querySelectorAll('[data-permit-map="sample"] .permit-map-pill strong')]
-      .map(node => (node.textContent || '').trim())
-    return labels.length === 2 && labels.some(text => /Bremen/i.test(text)) && labels.some(text => /Dortmund/i.test(text))
-  }, { timeout: 20000 })
-  const bremenLabels = await sampleMap.locator('.permit-map-pill strong').allInnerTexts()
-  record(
-    'Selecting Bremen→Dortmund updates the sample map labels',
-    bremenLabels.some(text => /Bremen/i.test(text)) && bremenLabels.some(text => /Dortmund/i.test(text)),
-    bremenLabels.join(' | '),
-  )
-
-  async function assertDesktopPermitMaps(width, height) {
-    await page.setViewportSize({ width, height })
-    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
-    const skip = page.getByRole('button', { name: /skip/i })
-    if (await skip.count()) await skip.first().click()
-    await page.getByRole('tab', { name: 'Demo dashboard' }).click()
-    await page.locator('[data-permit-map="overview"]').waitFor({ timeout: 25000 })
-    await page.locator('.transport-readiness').scrollIntoViewIfNeeded()
-    await page.locator('[data-permit-map="overview"] .leaflet-container').waitFor({ timeout: 25000 })
-    await page.waitForFunction(() => {
-      const root = document.querySelector('[data-permit-map="overview"]')
-      if (!root) return false
-      const tiles = root.querySelectorAll('img.leaflet-tile').length
-      const paths = root.querySelectorAll('.leaflet-overlay-pane path').length
-      return tiles > 0 && paths >= 4
-    }, { timeout: 25000 })
-    const hero = await page.locator('[data-permit-map="overview"]').evaluate(permitMapCounts)
-    record(
-      `Hero map at ${width}×${height} has tiles and ≥4 route paths`,
-      hero.tiles > 0 && hero.paths >= 4,
-      JSON.stringify(hero),
-    )
-    record(
-      `Hero map at ${width}×${height} is taller than 300px`,
-      hero.height > 300,
-      JSON.stringify(hero),
-    )
-    await page.getByRole('tab', { name: 'Try a sample permit' }).click()
-    await page.locator('[data-permit-map="sample"]').waitFor({ timeout: 20000 })
-    await page.locator('.transport-readiness').scrollIntoViewIfNeeded()
-    await page.locator('[data-permit-map="sample"] .leaflet-container').waitFor({ timeout: 20000 })
-    await page.waitForFunction(() => {
-      const root = document.querySelector('[data-permit-map="sample"]')
-      if (!root) return false
-      const tiles = root.querySelectorAll('img.leaflet-tile').length
-      const paths = root.querySelectorAll('.leaflet-overlay-pane path').length
-      return tiles > 0 && paths >= 1
-    }, { timeout: 25000 })
-    const sample = await page.locator('[data-permit-map="sample"]').evaluate(permitMapCounts)
-    record(
-      `Sample-permit map at ${width}×${height} has tiles and ≥1 route path`,
-      sample.tiles > 0 && sample.paths >= 1,
-      JSON.stringify(sample),
-    )
-    record(
-      `Sample-permit map at ${width}×${height} is taller than 300px`,
-      sample.height > 300,
-      JSON.stringify(sample),
-    )
-  }
-  await assertDesktopPermitMaps(1280, 800)
-  await assertDesktopPermitMaps(1920, 1200)
-  await page.setViewportSize({ width: 1440, height: 900 })
+  const skipHome = page.getByRole('button', { name: /skip/i })
+  if (await skipHome.count()) await skipHome.first().click().catch(() => {})
 
   async function skipIfNeeded() {
     await ensureLoggedIn('Demo')
@@ -1136,8 +1037,8 @@ async function main() {
     await overviewTip.waitFor({ state: 'visible', timeout: 20000 })
     const overviewMeta = ((await overviewTip.locator('.demo-tour-meta').textContent()) || '').trim()
     record(
-      'Demo Overview guide shows Step 1 of 6 · Overview',
-      overviewMeta === 'Step 1 of 6 · Overview',
+      'Demo Overview guide shows Step 1 of 8 · Overview',
+      overviewMeta === 'Step 1 of 8 · Overview',
       overviewMeta,
     )
     for (let i = 0; i < 8; i++) {
@@ -1268,8 +1169,50 @@ async function main() {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(200)
 
+    // Compact tour cards must never drop body/controls at 375×667.
+    await page.setViewportSize({ width: 375, height: 667 })
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    if (await page.locator('.demo-tour-tooltip, .demo-tour-menu').count()) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+    }
+    await startGuideSection('Overview')
+    const compactTip = page.locator('.demo-tour-tooltip')
+    let compactOk = true
+    const compactFails = []
+    for (let i = 0; i < 10; i++) {
+      await compactTip.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+      if (!(await compactTip.count())) break
+      const info = await compactTip.evaluate(el => {
+        const body = (el.querySelector('.demo-tour-body')?.textContent || '').trim()
+        const meta = (el.querySelector('.demo-tour-meta')?.textContent || '').trim()
+        const back = Array.from(el.querySelectorAll('button')).some(b => /Back/i.test(b.textContent || ''))
+        const primary = Array.from(el.querySelectorAll('button')).some(b => /Next|Done|Continue|Back to guides|Open full-size map/i.test(b.textContent || ''))
+        const title = (el.querySelector('.demo-tour-title')?.textContent || '').trim()
+        return { body: body.length > 0, meta: /Step \d+ of \d+/i.test(meta), back, primary, title, metaText: meta }
+      })
+      if (!info.body || !info.meta || !info.back || !info.primary) {
+        compactOk = false
+        compactFails.push(info)
+      }
+      const done = compactTip.getByRole('button', { name: 'Done' })
+      const backGuides = compactTip.getByRole('button', { name: 'Back to guides' })
+      if ((await done.count()) && (await backGuides.count())) break
+      const doIt = compactTip.getByRole('button', { name: 'Open full-size map' })
+      if (await doIt.count()) await doIt.click({ timeout: 10000 }).catch(() => {})
+      else await compactTip.locator('.demo-tour-btn.is-primary').click({ timeout: 10000 }).catch(() => {})
+      await page.waitForTimeout(350)
+    }
+    record(
+      'Demo Overview tour cards at 375×667 keep body, step counter, and Back/Next',
+      compactOk,
+      JSON.stringify(compactFails.slice(0, 3)),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+
     // Overview steps (same anchors as full tour): each must get its own spotlight.
-    // Next transport / Upcoming only exist on the Demo dashboard panel — force that mode.
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
     await ensureLoggedIn('Demo')
@@ -1277,47 +1220,21 @@ async function main() {
       await page.keyboard.press('Escape')
       await page.waitForTimeout(200)
     }
-    // Demo vs sample spotlight includes the sample tab — force Demo panel before the walk.
-    // State hydrate can briefly restore sample mode; click until the demo anchors exist.
-    for (let i = 0; i < 4; i++) {
-      await page.evaluate(() => {
-        const tab = document.querySelector('#overview-tab-demo')
-        if (tab instanceof HTMLElement) tab.click()
-      })
-      const ready = await page.waitForFunction(() => {
-        return Boolean(
-          document.querySelector('[data-overview-mode="demo"]')
-            && document.querySelector('[data-tour="overview-next-heading"]')
-            && document.querySelector('[data-tour="overview-upcoming-heading"]'),
-        )
-      }, null, { timeout: 2500 }).then(() => true).catch(() => false)
-      if (ready) break
-      await page.waitForTimeout(200)
-    }
     await startGuideSection('Overview')
     const overviewSpotTip = page.locator('.demo-tour-tooltip')
     const overviewTitles = [
-      { title: 'Your dispatch home', anchor: '[data-tour="overview-hero"]' },
-      { title: 'Import a permitted route', anchor: '[data-tour="overview-cta-import"]' },
-      { title: 'Demo vs sample permit', anchor: '[data-tour="overview-mode-banner"]' },
-      { title: 'Next transport', anchor: '[data-tour="overview-next-heading"]' },
-      { title: 'Upcoming permitted routes', anchor: '[data-tour="overview-upcoming-heading"]' },
-      { title: 'What a live check uses', anchor: '[data-tour="overview-workflow"]' },
+      { title: 'The 3-step strip', anchor: '[data-tour="overview-workflow"]' },
+      { title: 'Check new route', anchor: '[data-tour="overview-check-new"]' },
+      { title: 'Route list and filters', anchor: '[data-tour="overview-filters"]' },
+      { title: 'Route block', anchor: '[data-tour="overview-route-block-heading"]' },
+      { title: 'Show and Show all', anchor: '[data-tour="overview-show-all"]' },
+      { title: 'Full-size map', anchor: '[data-tour="overview-fullmap-open"]' },
+      { title: 'All routes or single route', anchor: '[data-tour="overview-fullmap-modes"]' },
+      { title: 'Minimise', anchor: '[data-tour="overview-fullmap-minimise"]' },
     ]
     const overviewSpots = []
     for (const { title, anchor } of overviewTitles) {
       await overviewSpotTip.locator('.demo-tour-title', { hasText: title }).waitFor({ timeout: 20000 })
-      // After the mode-banner step, re-assert Demo panel so optional below-fold
-      // anchors are not unmounted if the sample tab was hit through the hole.
-      if (title === 'Demo vs sample permit') {
-        await page.evaluate(() => {
-          const tab = document.querySelector('#overview-tab-demo')
-          if (tab instanceof HTMLElement) tab.click()
-        })
-        await page.waitForFunction(() => {
-          return Boolean(document.querySelector('[data-tour="overview-next-heading"]'))
-        }, null, { timeout: 5000 }).catch(() => {})
-      }
       // Wait until spotlight intersects this step's anchor (not a stale prior target).
       await page.waitForFunction(({ expected, sel }) => {
         const tipTitle = document.querySelector('.demo-tour-tooltip .demo-tour-title')?.textContent?.trim() || ''
@@ -1344,7 +1261,13 @@ async function main() {
       overviewSpots.push({ title, spot })
       if (title !== overviewTitles[overviewTitles.length - 1].title) {
         const before = title
-        await overviewSpotTip.locator('.demo-tour-btn.is-primary').click({ timeout: 10000 })
+        if (title === 'Full-size map') {
+          const doIt = overviewSpotTip.getByRole('button', { name: 'Open full-size map' })
+          if (await doIt.count()) await doIt.click({ timeout: 10000 })
+          else await overviewSpotTip.locator('.demo-tour-btn.is-primary').click({ timeout: 10000 })
+        } else {
+          await overviewSpotTip.locator('.demo-tour-btn.is-primary').click({ timeout: 10000 })
+        }
         await page.waitForFunction(prev => {
           const t = document.querySelector('.demo-tour-tooltip .demo-tour-title')?.textContent?.trim() || ''
           return t && t !== prev
@@ -1811,6 +1734,33 @@ async function main() {
   await page.getByRole('button', { name: 'Check route' }).click()
   await page.locator('.verdict-banner').waitFor({ timeout: 90000 })
   record('Route check finished', true, (await page.locator('.verdict-banner').innerText()).replace(/\s+/g, ' ').slice(0, 120))
+  const openFullMap = page.getByRole('link', { name: /Open in full-size map/i })
+  await openFullMap.waitFor({ timeout: 10000 })
+  const fullMapHref = (await openFullMap.getAttribute('href')) || ''
+  record(
+    'Route check result has Open in full-size map deep link',
+    /^\/?\?map=full&route=/.test(fullMapHref) || /map=full/.test(fullMapHref) && /route=/.test(fullMapHref),
+    fullMapHref,
+  )
+  // Deep-link the same URL to confirm Overview opens the full-size map for this route.
+  await page.goto(base + (fullMapHref.startsWith('/') ? fullMapHref : `/${fullMapHref}`), {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  })
+  await page.locator('[data-testid="overview-fullmap"]').waitFor({ timeout: 15000 })
+  record(
+    'Open in full-size map lands on Overview full map with route',
+    await page.locator('[data-testid="overview-fullmap"]').isVisible()
+      && /map=full/.test(page.url())
+      && /route=/.test(page.url()),
+    page.url(),
+  )
+  // Resume on the result via deep-link so later assertions stay on a finished check.
+  await page.goto(base + '/route-checks?permit=hamburg-hannover&run=1', {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  })
+  await page.locator('.verdict-banner').waitFor({ timeout: 120000 })
   const simulateTriggerCount = await page.locator('.test-scenarios-trigger').count()
   record(
     'Item 7: no 🧪 simulate trigger in production DOM',

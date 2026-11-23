@@ -9,10 +9,8 @@ export type TooltipPlacement =
   | 'center'
   | 'sheet'
   | 'sheet-top'
-  | 'sheet-compact'
-  | 'sheet-compact-top'
 
-export type MobileSheetPlacement = 'sheet' | 'sheet-top' | 'sheet-compact' | 'sheet-compact-top'
+export type MobileSheetPlacement = 'sheet' | 'sheet-top'
 
 const PAD = 10
 const GAP = 10
@@ -22,12 +20,17 @@ const HEADER_H = 56
 const TAB_BAR_H = 56
 /** Gap below the header for a top sheet (matches `.is-sheet-top` CSS). */
 const SHEET_TOP_GAP = 8
-/** One-line compact sheet (title + Next), including padding. */
+/**
+ * @deprecated Compact one-line sheets were removed — full card always keeps body + controls.
+ * Kept for test imports that still reference the constant.
+ */
 export const COMPACT_SHEET_H = 64
 /** Target taller than this fraction of the viewport is truncated for the spotlight. */
 export const TALL_VIEWPORT_RATIO = 0.6
 /** Spotlight shows at most this fraction of the viewport height for tall targets. */
 export const TALL_SPOT_VIEWPORT_RATIO = 0.4
+/** Mobile tip body scrolls inside this fraction of the viewport. */
+export const MOBILE_SHEET_MAX_VH = 0.45
 
 export function prefersReducedMotion(): boolean {
   try {
@@ -134,8 +137,8 @@ function sheetRectAtTop(
 }
 
 /**
- * After scroll/remeasure: pick bottom sheet, top sheet, or a compact one-line
- * variant so the tip does not cover the spotlight target.
+ * After scroll/remeasure: pick bottom or top full sheet so the target's top
+ * stays visible. Never collapses to a one-line compact bar.
  */
 export function decideMobileSheetPlacement(
   target: Rect,
@@ -148,29 +151,51 @@ export function decideMobileSheetPlacement(
   },
 ): MobileSheetPlacement {
   const sheetH = opts.sheetHeight
-  const compactH = opts.compactHeight ?? COMPACT_SHEET_H
   const headerBottom = opts.headerBottom ?? HEADER_H
   const tabBarHeight = opts.tabBarHeight ?? TAB_BAR_H
 
   const bottomFull = sheetRectAtBottom(viewport, sheetH, tabBarHeight)
   const topFull = sheetRectAtTop(viewport, sheetH, headerBottom)
 
-  if (!rectsIntersect(target, bottomFull)) return 'sheet'
-  if (!rectsIntersect(target, topFull)) return 'sheet-top'
+  const topVisibleWithBottom = target.top + 1 < bottomFull.top
+  const topVisibleWithTop = target.top >= topFull.top + topFull.height - 1
 
-  const bottomCompact = sheetRectAtBottom(viewport, compactH, tabBarHeight)
-  const topCompact = sheetRectAtTop(viewport, compactH, headerBottom)
+  if (topVisibleWithBottom && !rectsIntersect(target, bottomFull)) return 'sheet'
+  if (topVisibleWithTop && !rectsIntersect(target, topFull)) return 'sheet-top'
+  if (topVisibleWithBottom) return 'sheet'
+  if (topVisibleWithTop) return 'sheet-top'
 
-  if (!rectsIntersect(target, bottomCompact)) return 'sheet-compact'
-  if (!rectsIntersect(target, topCompact)) return 'sheet-compact-top'
+  // Neither edge fully clears the target top — pick the edge that leaves more
+  // free space under/above the target's top edge.
+  const freeAboveBottomSheet = Math.max(0, bottomFull.top - target.top)
+  const freeBelowTopSheet = Math.max(0, target.top + target.height - (topFull.top + topFull.height))
+  return freeAboveBottomSheet >= freeBelowTopSheet ? 'sheet' : 'sheet-top'
+}
 
-  // Tall target still overlaps both compact edges — pick the smaller overlap.
-  const overlap = (sheet: Rect) => {
-    const top = Math.max(target.top, sheet.top)
-    const bottom = Math.min(target.top + target.height, sheet.top + sheet.height)
-    return Math.max(0, bottom - top)
-  }
-  return overlap(bottomCompact) <= overlap(topCompact) ? 'sheet-compact' : 'sheet-compact-top'
+/** Clip spotlight to the band between header and sheet so the tip never covers it. */
+export function truncateSpotlightToVisibleBand(
+  rect: Rect,
+  viewport: { width: number; height: number },
+  placement: MobileSheetPlacement,
+  sheetHeight: number,
+  opts: { headerBottom?: number; tabBarHeight?: number } = {},
+): Rect {
+  const headerBottom = opts.headerBottom ?? HEADER_H
+  const tabBarHeight = opts.tabBarHeight ?? TAB_BAR_H
+  const bandTop = placement === 'sheet-top'
+    ? headerBottom + SHEET_TOP_GAP + sheetHeight
+    : headerBottom
+  const bandBottom = placement === 'sheet'
+    ? viewport.height - tabBarHeight - sheetHeight
+    : viewport.height - tabBarHeight
+
+  const top = Math.max(rect.top, bandTop)
+  const bottom = Math.min(rect.top + rect.height, bandBottom)
+  const height = Math.max(4, bottom - top)
+  return clampSpotlightRect(
+    { top, left: rect.left, width: rect.width, height },
+    viewport,
+  )
 }
 
 /**
@@ -204,22 +229,15 @@ export function placeTooltip(
     const sheetH = opts.sheetHeight ?? tipH
     const decisionH =
       opts.decisionSheetHeight ??
-      Math.max(sheetH, Math.min(280, Math.floor(viewport.height * 0.36)))
+      Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), 320))
     const placement = opts.preferSheetTop
       ? ('sheet-top' as MobileSheetPlacement)
       : decideMobileSheetPlacement(target, viewport, {
           sheetHeight: decisionH,
           compactHeight: opts.compactHeight,
         })
-    if (placement === 'sheet-top' || placement === 'sheet-compact-top') {
+    if (placement === 'sheet-top') {
       return { top: HEADER_H + SHEET_TOP_GAP, left: PAD, placement }
-    }
-    if (placement === 'sheet-compact') {
-      return {
-        top: Math.max(PAD, viewport.height - COMPACT_SHEET_H - TAB_BAR_H),
-        left: PAD,
-        placement,
-      }
     }
     return {
       top: Math.max(PAD, viewport.height - sheetH - TAB_BAR_H),

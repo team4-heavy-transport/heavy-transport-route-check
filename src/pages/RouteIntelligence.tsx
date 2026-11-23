@@ -2,8 +2,9 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle, ArrowLeft, Briefcase, CheckCircle2, ChevronDown, CircleX, Download,
-  FileUp, Loader2, MapPin, ShieldCheck, Truck, Upload,
+  Expand, FileUp, Loader2, MapPin, ShieldCheck, Truck, Upload,
 } from 'lucide-react'
+import { overviewRouteIdForResult } from '../lib/overviewRoutes'
 import type { RouteMapHandle } from '../components/RouteMapGL'
 import { Toast } from '../components/Feedback'
 import StatusTimeline from '../components/StatusTimeline'
@@ -1387,6 +1388,20 @@ export default function RouteIntelligencePolished() {
               <button type="button" className="btn-primary" data-tour="route-save-job-btn" onClick={() => setShowSaveJob(true)}>
                 <Briefcase size={16} /> Save as job
               </button>
+              <Link
+                to={`/?map=full&route=${encodeURIComponent(overviewRouteIdForResult({
+                  jobId: loadedJob.current,
+                  permitNumber,
+                  routeLabel: displayed
+                    ? `${displayed.route.origin} → ${displayed.route.destination}`
+                    : undefined,
+                }))}`}
+                className="btn-secondary"
+                data-tour="route-open-fullmap"
+                data-testid="route-open-fullmap"
+              >
+                <Expand size={16} /> Open in full-size map
+              </Link>
               <button type="button" className="btn-secondary" onClick={() => exportCurrent('pdf')}>
                 <Download size={16} /> Export PDF
               </button>

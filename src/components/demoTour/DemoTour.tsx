@@ -42,10 +42,12 @@ import {
   isNarrowViewport,
   isUsableSpotlightRect,
   measureTooltipSize,
+  MOBILE_SHEET_MAX_VH,
   placeTooltip,
   prefersReducedMotion,
   readVerdictFromDom,
   rectIntersectsViewport,
+  truncateSpotlightToVisibleBand,
   verdictCtaBody,
   waitForSelector,
   type Rect,
@@ -479,18 +481,19 @@ export default function DemoTour() {
           setSpot(null)
           setTipPos(placeTooltip(null, tipSize, viewport))
         } else {
-          setSpot(rect)
-          // Decision uses a stable full-sheet height so a compact tip cannot
-          // flip back to a full bottom sheet that covers the target again.
           const decisionSheetHeight = narrow
-            ? Math.max(sheetH, Math.min(280, Math.floor(viewport.height * 0.36)))
+            ? Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), 320))
             : sheetH
-          setTipPos(
-            placeTooltip(rect, tipSize, viewport, {
-              sheetHeight: sheetH,
-              decisionSheetHeight,
-            }),
-          )
+          const placed = placeTooltip(rect, tipSize, viewport, {
+            sheetHeight: sheetH,
+            decisionSheetHeight,
+          })
+          const spotRect =
+            narrow && (placed.placement === 'sheet' || placed.placement === 'sheet-top')
+              ? truncateSpotlightToVisibleBand(rect, viewport, placed.placement, decisionSheetHeight)
+              : rect
+          setSpot(isUsableSpotlightRect(spotRect) ? spotRect : rect)
+          setTipPos(placed)
         }
       } else {
         setSpot(null)
@@ -764,11 +767,8 @@ export default function DemoTour() {
   const yieldToDialog = appDialogOpen && currentStep?.id === 'route-cta-panel'
   const sheetPlacement = tipPos.placement
   const isSheetBottom =
-    sheetPlacement === 'sheet' || sheetPlacement === 'sheet-compact'
-  const isSheetTop =
-    sheetPlacement === 'sheet-top' || sheetPlacement === 'sheet-compact-top'
-  const isSheetCompact =
-    sheetPlacement === 'sheet-compact' || sheetPlacement === 'sheet-compact-top'
+    sheetPlacement === 'sheet'
+  const isSheetTop = sheetPlacement === 'sheet-top'
   const primaryLabel = isLastStep
     ? mode.full
       ? 'Finish'
@@ -973,13 +973,12 @@ export default function DemoTour() {
                 ? ' is-sheet'
                 : '',
               isSheetTop ? ' is-sheet-top' : '',
-              isSheetCompact ? ' is-sheet-compact' : '',
               yieldToDialog ? ' is-yielding' : '',
             ].join('')}
             role="dialog"
             aria-modal={yieldToDialog ? 'false' : 'true'}
             aria-labelledby={titleId}
-            aria-describedby={isSheetCompact ? undefined : bodyId}
+            aria-describedby={bodyId}
             tabIndex={-1}
             data-tour-placement={sheetPlacement}
             data-tour-yield={yieldToDialog ? 'app-dialog' : undefined}
@@ -991,95 +990,80 @@ export default function DemoTour() {
                   : { top: tipPos.top, left: tipPos.left }
             }
           >
-            {isSheetCompact ? (
-              <>
-                <h2 id={titleId} className="demo-tour-title">
-                  {currentStep.title}
-                </h2>
-                <div className="demo-tour-actions">
-                  <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                    {primaryLabel}
-                  </button>
-                </div>
-              </>
+            <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
+            <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
+            <p id={bodyId} className="demo-tour-body">{tipBody}</p>
+            <div className="demo-tour-meta-row">
+              <p className="demo-tour-meta">{stepMeta}</p>
+              <div className="demo-tour-text-links">
+                <button type="button" className="demo-tour-text-link" onClick={() => returnToGuides()}>
+                  All guides
+                </button>
+                <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
+                  Skip guide
+                </button>
+                <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
+                  Exit
+                </button>
+              </div>
+            </div>
+            {setupFallback ? (
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={() => returnToGuides()}>
+                  Back to guides
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                <button
+                  type="button"
+                  className="demo-tour-btn is-primary"
+                  onClick={() => startSection(setupFallback.ctaSection)}
+                >
+                  {setupFallback.ctaLabel}
+                </button>
+              </div>
+            ) : yieldToDialog ? (
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                  Back
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                <button
+                  type="button"
+                  className="demo-tour-btn is-primary"
+                  onClick={onClosePanelAndContinue}
+                >
+                  Close it and continue
+                </button>
+              </div>
             ) : (
-              <>
-                <span className="demo-tour-eyebrow">{sectionLabel(currentStep.section)}</span>
-                <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
-                <p id={bodyId} className="demo-tour-body">{tipBody}</p>
-                <div className="demo-tour-meta-row">
-                  <p className="demo-tour-meta">{stepMeta}</p>
-                  <div className="demo-tour-text-links">
-                    <button type="button" className="demo-tour-text-link" onClick={() => returnToGuides()}>
-                      All guides
-                    </button>
-                    <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
-                      Skip guide
-                    </button>
-                    <button type="button" className="demo-tour-text-link" onClick={() => closeTour()} aria-label="Exit tour">
-                      Exit
-                    </button>
-                  </div>
-                </div>
-                {setupFallback ? (
-                  <div className="demo-tour-actions">
-                    <button type="button" className="demo-tour-btn" onClick={() => returnToGuides()}>
-                      Back to guides
-                    </button>
-                    <span className="demo-tour-actions-spacer" />
-                    <button
-                      type="button"
-                      className="demo-tour-btn is-primary"
-                      onClick={() => startSection(setupFallback.ctaSection)}
-                    >
-                      {setupFallback.ctaLabel}
-                    </button>
-                  </div>
-                ) : yieldToDialog ? (
-                  <div className="demo-tour-actions">
-                    <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                      Back
-                    </button>
-                    <span className="demo-tour-actions-spacer" />
-                    <button
-                      type="button"
-                      className="demo-tour-btn is-primary"
-                      onClick={onClosePanelAndContinue}
-                    >
-                      Close it and continue
-                    </button>
-                  </div>
-                ) : (
-                  <div className="demo-tour-actions">
-                    <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
-                      Back
-                    </button>
-                    <span className="demo-tour-actions-spacer" />
-                    {isLastStep && (
-                      <button type="button" className="demo-tour-btn" onClick={() => backToGuides()}>
-                        Back to guides
-                      </button>
-                    )}
-                    {showDoIt && (
-                      <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
-                        {currentStep.doItLabel}
-                      </button>
-                    )}
-                    {isLastStep && currentStep.nextFlowCta && (
-                      <button
-                        type="button"
-                        className="demo-tour-btn"
-                        onClick={openNextFlowFromCloser}
-                      >
-                        {currentStep.nextFlowCta.label}
-                      </button>
-                    )}
-                    <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
-                      {primaryLabel}
-                    </button>
-                  </div>
+              <div className="demo-tour-actions">
+                <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
+                  Back
+                </button>
+                <span className="demo-tour-actions-spacer" />
+                {isLastStep && (
+                  <button type="button" className="demo-tour-btn" onClick={() => backToGuides()}>
+                    Back to guides
+                  </button>
                 )}
-              </>
+                {showDoIt && (
+                  <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
+                    {currentStep.doItLabel}
+                  </button>
+                )}
+                {isLastStep && currentStep.nextFlowCta && (
+                  <button
+                    type="button"
+                    className="demo-tour-btn"
+                    onClick={openNextFlowFromCloser}
+                  >
+                    {currentStep.nextFlowCta.label}
+                  </button>
+                )}
+                <button type="button" className="demo-tour-btn is-primary" onClick={goNext}>
+                  {primaryLabel}
+                </button>
+              </div>
             )}
           </div>
         </>
