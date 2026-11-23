@@ -10,12 +10,12 @@ import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { BookOpen, Check } from 'lucide-react'
 import {
-  TOUR_SECTIONS,
   acknowledgeWelcome,
   dismissWelcome,
   flowAccessibleName,
   isFlowDone,
   isFullTourDone,
+  isTourSectionEnabled,
   markSectionComplete,
   nextIncompleteFlowId,
   readTourProgress,
@@ -25,6 +25,7 @@ import {
   stepsForFullTour,
   stepsForSection,
   tourFlowEntries,
+  visibleTourSections,
   writeTourProgress,
   type DemoTourProgress,
   type TourFlowId,
@@ -217,8 +218,9 @@ export default function DemoTour() {
 
   const startSection = useCallback(
     (section: TourSectionId) => {
+      if (!isTourSectionEnabled(section)) return
       const steps = stepsForSection(section)
-      const meta = TOUR_SECTIONS.find(item => item.id === section)
+      const meta = visibleTourSections().find(item => item.id === section)
       const entry = FLOW_ENTRIES.find(item => item.id === section)
       if (meta && location.pathname !== meta.route) {
         navigate(meta.route)

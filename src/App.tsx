@@ -7,6 +7,7 @@ import { RouteMonitoringProvider } from './context/RouteMonitoringContext'
 import { JobsProvider } from './context/JobsContext'
 import { OrgSettingsProvider } from './context/OrgSettingsContext'
 import { importWithChunkRecovery } from './lib/chunkLoadRecovery'
+import { FEATURE_JOBS_AND_ALERTS_PAGES } from './lib/featureFlags'
 import Login from './pages/Login'
 import NotFound from './pages/NotFound'
 
@@ -33,13 +34,27 @@ function AuthenticatedApp({ userId }: { userId: string }) {
             <Routes>
               <Route path="/" element={<Layout />}>
                 <Route index element={<Suspense fallback={<PageFallback />}><MarketplaceOverview /></Suspense>} />
-                <Route path="jobs" element={<Suspense fallback={<PageFallback />}><SavedJobs /></Suspense>} />
+                <Route
+                  path="jobs/*"
+                  element={
+                    FEATURE_JOBS_AND_ALERTS_PAGES
+                      ? <Suspense fallback={<PageFallback />}><SavedJobs /></Suspense>
+                      : <Navigate to="/" replace />
+                  }
+                />
                 <Route path="search" element={<Suspense fallback={<PageFallback />}><SearchResults /></Suspense>} />
                 <Route path="route-checks" element={<Suspense fallback={<PageFallback />}><RouteIntelligence /></Suspense>} />
                 <Route path="data-partners" element={<Suspense fallback={<PageFallback />}><DataPartners /></Suspense>} />
                 <Route path="map-explorer" element={<Suspense fallback={<PageFallback />}><LiveMap /></Suspense>} />
                 <Route path="live-map" element={<Navigate to="/map-explorer" replace />} />
-                <Route path="activity" element={<Suspense fallback={<PageFallback />}><MarketplaceActivity /></Suspense>} />
+                <Route
+                  path="activity/*"
+                  element={
+                    FEATURE_JOBS_AND_ALERTS_PAGES
+                      ? <Suspense fallback={<PageFallback />}><MarketplaceActivity /></Suspense>
+                      : <Navigate to="/" replace />
+                  }
+                />
                 <Route path="settings" element={<Suspense fallback={<PageFallback />}><Settings /></Suspense>} />
                 <Route path="*" element={<NotFound />} />
               </Route>

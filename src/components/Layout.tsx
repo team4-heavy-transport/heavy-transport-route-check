@@ -26,15 +26,21 @@ import {
   reduceNavChromeOpenMobile,
   reduceNavChromeViewportChange,
 } from '../lib/layoutNavChrome'
+import { FEATURE_JOBS_AND_ALERTS_PAGES } from '../lib/featureFlags'
+import { overviewRouteIdForResult } from '../lib/overviewRoutes'
 
 const DemoTour = lazy(() => import('./demoTour/DemoTour'))
 
 const navItems = [
   { path: '/', label: 'Overview', icon: Home, exact: true },
   { path: '/route-checks', label: 'Route checks', icon: Route },
-  { path: '/jobs', label: 'Jobs', icon: Briefcase },
+  ...(FEATURE_JOBS_AND_ALERTS_PAGES
+    ? [{ path: '/jobs', label: 'Jobs', icon: Briefcase }]
+    : []),
   { path: '/map-explorer', label: 'Corridor monitor', icon: Map },
-  { path: '/activity', label: 'Alerts & history', icon: ShieldAlert },
+  ...(FEATURE_JOBS_AND_ALERTS_PAGES
+    ? [{ path: '/activity', label: 'Alerts & history', icon: ShieldAlert }]
+    : []),
 ]
 
 const connectorItems = [
@@ -86,14 +92,26 @@ export default function Layout() {
     () => searchAppData({ query: searchQuery, jobs, history, alerts }),
     [alerts, history, jobs, searchQuery],
   )
-  const notifications = alerts.slice(0, 4).map(alert => ({
-    id: alert.id,
-    title: alert.escalated ? `Escalated · ${alert.change}` : alert.change,
-    desc: `${alert.routeLabel} · ${alert.source} · ${alert.detail}`,
-    time: formatBerlinDateTime(alert.runAt) || alert.time,
-    color: alert.escalated || alert.severity === 'HOLD' ? 'bg-red-500' : alert.severity === 'VERIFY' ? 'bg-amber-500' : 'bg-green-500',
-    link: alert.jobId ? `/jobs` : '/activity',
-  }))
+  const notifications = alerts.slice(0, 4).map(alert => {
+    const routeId = overviewRouteIdForResult({
+      jobId: alert.jobId,
+      permitNumber: alert.routeId !== alert.jobId ? alert.routeId : undefined,
+      routeLabel: alert.routeLabel,
+    })
+    const overviewLink = routeId && routeId !== 'check'
+      ? `/?map=full&route=${encodeURIComponent(routeId)}`
+      : '/'
+    return {
+      id: alert.id,
+      title: alert.escalated ? `Escalated · ${alert.change}` : alert.change,
+      desc: `${alert.routeLabel} · ${alert.source} · ${alert.detail}`,
+      time: formatBerlinDateTime(alert.runAt) || alert.time,
+      color: alert.escalated || alert.severity === 'HOLD' ? 'bg-red-500' : alert.severity === 'VERIFY' ? 'bg-amber-500' : 'bg-green-500',
+      link: FEATURE_JOBS_AND_ALERTS_PAGES
+        ? (alert.jobId ? '/jobs' : '/activity')
+        : overviewLink,
+    }
+  })
   const navChrome = { collapsed, mobileOpen }
   const sidebarCollapsed = effectiveSidebarCollapsed(collapsed, viewportWidth)
   const collapseLabel = collapseControlLabel(navChrome, viewportWidth)
@@ -499,9 +517,14 @@ export default function Layout() {
                     </button>
                   ))}
                   <div style={{ padding: '10px 16px', borderTop: '1px solid var(--divider)' }}>
-                    <button onClick={() => { navigate('/activity'); setNotifOpen(false) }}
-                      style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)', background: 'none', cursor: 'pointer' }}>
-                      View all notifications
+                    <button
+                      onClick={() => {
+                        navigate(FEATURE_JOBS_AND_ALERTS_PAGES ? '/activity' : '/?map=full')
+                        setNotifOpen(false)
+                      }}
+                      style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent)', background: 'none', cursor: 'pointer' }}
+                    >
+                      {FEATURE_JOBS_AND_ALERTS_PAGES ? 'View all notifications' : 'Open routes overview'}
                     </button>
                   </div>
                 </div>

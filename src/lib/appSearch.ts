@@ -66,7 +66,11 @@ export function searchAppData(opts: {
       kind: 'check',
       title: record.permitName || record.routeLabel,
       detail: `${record.verdict} · ${record.routeLabel}`,
-      href: record.jobId ? `/route-checks?job=${encodeURIComponent(record.jobId)}` : '/activity',
+      href: record.jobId
+        ? `/route-checks?job=${encodeURIComponent(record.jobId)}`
+        : `/?map=full&route=${encodeURIComponent(
+            (record.permitNumber || '').trim() || (record.routeLabel || '').trim() || 'check',
+          )}`,
     })
   }
 
@@ -93,7 +97,11 @@ export function searchAppData(opts: {
       kind: 'alert',
       title: alert.change,
       detail: `${alert.routeLabel} · ${alert.severity}`,
-      href: alert.jobId ? '/jobs' : '/activity',
+      href: alert.jobId
+        ? `/route-checks?job=${encodeURIComponent(alert.jobId)}`
+        : `/?map=full&route=${encodeURIComponent(
+            (alert.routeId || '').trim() || (alert.routeLabel || '').trim() || 'check',
+          )}`,
     })
   }
 

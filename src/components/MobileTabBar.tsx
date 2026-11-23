@@ -1,13 +1,24 @@
 import { NavLink } from 'react-router-dom'
 import { Home, Route, Map, ShieldAlert, Settings } from 'lucide-react'
+import { FEATURE_JOBS_AND_ALERTS_PAGES } from '../lib/featureFlags'
 
-const tabs = [
+const tabsWhenAlertsOn = [
   { path: '/', label: 'Home', icon: Home, exact: true },
   { path: '/route-checks', label: 'Route checks', icon: Route },
   { path: '/map-explorer', label: 'Corridor', icon: Map },
   { path: '/activity', label: 'Alerts', icon: ShieldAlert },
   { path: '/settings', label: 'Settings', icon: Settings },
 ]
+
+/** Flag off: keep 4 balanced items (Home, Route checks, Corridor, Settings). */
+const tabsWhenAlertsOff = [
+  { path: '/', label: 'Home', icon: Home, exact: true },
+  { path: '/route-checks', label: 'Route checks', icon: Route },
+  { path: '/map-explorer', label: 'Corridor', icon: Map },
+  { path: '/settings', label: 'Settings', icon: Settings },
+]
+
+const tabs = FEATURE_JOBS_AND_ALERTS_PAGES ? tabsWhenAlertsOn : tabsWhenAlertsOff
 
 export default function MobileTabBar() {
   return (
