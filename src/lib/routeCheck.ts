@@ -390,6 +390,8 @@ export const testPermits: TestPermit[] = [
 
 export const sampleTestPermits = testPermits.filter(permit => permit.id !== 'invalid' && permit.kind === 'live');
 export const scenarioTestPermits = testPermits.filter(permit => permit.kind === 'scenario');
+/** Live + scenario permits (excludes invalid) — used to resolve Overview map geometry. */
+export const geometryTestPermits = testPermits.filter(permit => permit.id !== 'invalid');
 
 export type VehicleDimsInput = {
   width?: number | string | null

@@ -14,18 +14,22 @@ import {
   collapseSummaryDuplicates,
   countByStatus,
   countRoutesWithoutGeometry,
+  endsMatchPermit,
   filterOverviewRoutes,
   filtersAreActive,
+  findGeometryPermit,
   groupAlertsByStatus,
   looksLikeCoordinates,
   normaliseSummaryKey,
   overviewRouteIdForResult,
   parseOverviewFilters,
   routeDisplayTitle,
+  routeLacksMapGeometry,
   serializeOverviewFilters,
   sortOverviewRoutes,
   sortSummaryBySeverity,
 } from './overviewRoutes.ts'
+import { geometryTestPermits, sampleTestPermits } from './routeCheck.ts'
 
 const NOW = new Date('2026-11-23T12:00:00+01:00')
 
@@ -685,4 +689,119 @@ test('countRoutesWithoutGeometry reports missing tracks', () => {
   const { missing, total } = countRoutesWithoutGeometry(routes)
   assert.equal(total, 2)
   assert.equal(missing, 1)
+})
+
+test('sampleTestPermits are live-only — scenario permits need geometryPermits', () => {
+  assert.ok(sampleTestPermits.every(p => p.kind === 'live'))
+  assert.ok(!sampleTestPermits.some(p => p.permitNumber === 'SCENARIO-READY'))
+  assert.ok(geometryTestPermits.some(p => p.permitNumber === 'SCENARIO-READY'))
+  assert.ok(geometryTestPermits.some(p => p.id === 'hof-bayreuth'))
+})
+
+test('findGeometryPermit matches SCENARIO-READY by number and Hof by origin/destination', () => {
+  const scenario = findGeometryPermit(geometryTestPermits, { permitNumber: 'SCENARIO-READY' })
+  assert.ok(scenario)
+  assert.equal(scenario.id, 'scenario-ready')
+  assert.equal(scenario.gpxFile, '/test-permits/lubeck-rostock-a20.gpx')
+
+  const hof = findGeometryPermit(geometryTestPermits, {
+    permitNumber: '',
+    routeLabel: 'Hof A9 → Bayreuth A9',
+  })
+  assert.ok(hof)
+  assert.equal(hof.id, 'hof-bayreuth')
+  assert.equal(hof.gpxFile, '/test-permits/hof-bayreuth-a9.gpx')
+
+  const lubeckArrow = findGeometryPermit(geometryTestPermits, {
+    permitNumber: 'unknown',
+    origin: 'Lübeck A20',
+    destination: 'Rostock A20',
+  })
+  assert.ok(lubeckArrow)
+  assert.ok(
+    lubeckArrow.id === 'lubeck-rostock' || lubeckArrow.permitNumber === 'SCENARIO-READY',
+    `expected Lübeck–Rostock permit, got ${lubeckArrow.id}`,
+  )
+})
+
+test('endsMatchPermit is diacritics- and arrow-tolerant', () => {
+  const lubeck = geometryTestPermits.find(p => p.id === 'lubeck-rostock')
+  assert.ok(lubeck)
+  assert.ok(endsMatchPermit('Lubeck A20', 'Rostock A20', lubeck))
+  assert.ok(endsMatchPermit('Lübeck A20', 'Rostock A20', lubeck))
+})
+
+test('buildOverviewRoutes resolves scenario + empty-number geometry via geometryPermits', () => {
+  const history = [
+    check({
+      id: 'sc-ready',
+      verdict: 'READY',
+      runAt: '2026-11-22T10:00:00+01:00',
+      permitNumber: 'SCENARIO-READY',
+      routeLabel: 'Lübeck A20 → Rostock A20',
+      permitName: 'Simulated READY',
+    }),
+    check({
+      id: 'hof-orphan',
+      verdict: 'VERIFY',
+      runAt: '2026-11-22T11:00:00+01:00',
+      permitNumber: '',
+      routeLabel: 'Hof A9 → Bayreuth A9',
+      permitName: 'Hof run',
+    }),
+  ]
+
+  // Old bug: number-only match against live samples misses SCENARIO-* and empty numbers.
+  assert.equal(
+    findGeometryPermit(sampleTestPermits, { permitNumber: 'SCENARIO-READY' })?.kind === 'scenario',
+    false,
+  )
+  assert.equal(
+    findGeometryPermit(sampleTestPermits, { permitNumber: 'SCENARIO-READY' })?.permitNumber,
+    undefined,
+  )
+  // Number miss + no ends → no permit (simulates pre-fallback behaviour for empty ends).
+  assert.equal(
+    findGeometryPermit(sampleTestPermits, { permitNumber: 'SCENARIO-READY', origin: '', destination: '' }),
+    undefined,
+  )
+
+  const fixed = buildOverviewRoutes({
+    jobs: [],
+    history,
+    examplePermits: sampleTestPermits,
+    geometryPermits: geometryTestPermits,
+  })
+  const ready = fixed.find(r => r.permitNumber === 'SCENARIO-READY')
+  assert.ok(ready)
+  assert.equal(ready.gpxFile, '/test-permits/lubeck-rostock-a20.gpx')
+  assert.equal(ready.permitId, 'scenario-ready')
+  assert.equal(routeLacksMapGeometry(ready), false)
+
+  const hof = fixed.find(r => r.id === 'Hof A9 → Bayreuth A9' || /Hof/i.test(r.title))
+  assert.ok(hof)
+  assert.equal(hof.gpxFile, '/test-permits/hof-bayreuth-a9.gpx')
+  assert.equal(routeLacksMapGeometry(hof), false)
+})
+
+test('buildOverviewRoutes falls back to permit gpxFile when job GPX fails to parse', () => {
+  const routes = buildOverviewRoutes({
+    jobs: [
+      job({
+        id: 'job-bad-gpx',
+        name: 'Broken GPX',
+        permitNumber: 'SCENARIO-READY',
+        origin: 'Lübeck A20',
+        destination: 'Rostock A20',
+        gpxContent: '<not-valid-gpx',
+      }),
+    ],
+    history: [],
+    examplePermits: sampleTestPermits,
+    geometryPermits: geometryTestPermits,
+  })
+  assert.equal(routes.length, 1)
+  assert.equal(routes[0].geometry, null)
+  assert.equal(routes[0].gpxFile, '/test-permits/lubeck-rostock-a20.gpx')
+  assert.equal(routeLacksMapGeometry(routes[0]), false)
 })

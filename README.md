@@ -49,6 +49,8 @@ pnpm test:verdict
 pnpm test:qa      # Playwright against a local preview of dist/
 ```
 
+Optional: set `VITE_FEATURE_JOBS_AND_ALERTS_PAGES=true` to show the Jobs and Alerts & history pages (hidden by default).
+
 ## Deploy (Vercel Hobby)
 
 - Build: `pnpm build`

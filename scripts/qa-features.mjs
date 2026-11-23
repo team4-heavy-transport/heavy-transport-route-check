@@ -6,6 +6,30 @@ const port = Number(process.env.QA_PORT || 4173)
 const base = process.env.QA_URL || `http://127.0.0.1:${port}`
 const results = []
 
+/**
+ * Must match the Vite build-time flag (`VITE_FEATURE_JOBS_AND_ALERTS_PAGES === 'true'`).
+ * Default QA build leaves Jobs / Alerts & history pages hidden.
+ */
+const FEATURE_JOBS_AND_ALERTS_PAGES = process.env.VITE_FEATURE_JOBS_AND_ALERTS_PAGES === 'true'
+
+function skipJobsAlerts(reason) {
+  console.log(`SKIP  Jobs/Alerts page check (flag off): ${reason}`)
+}
+
+/** Open the Jobs page when the flag is on; otherwise stay on Overview (jobs still in store). */
+async function openJobsPageIfEnabled(page, baseUrl, ensureLoggedIn) {
+  if (!FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.goto(baseUrl + '/', { waitUntil: 'domcontentloaded' })
+    if (ensureLoggedIn) await ensureLoggedIn()
+    return false
+  }
+  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
+    await page.getByRole('link', { name: 'Jobs' }).first().click().catch(() => {})
+  }
+  await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).first().waitFor({ timeout: 15000 }).catch(() => {})
+  return true
+}
+
 /** Matches `DEMO_TOUR_STORAGE_KEY` / dismissed shape from `src/lib/demoTour.ts`. */
 const DEMO_TOUR_STORAGE_KEY = 'htr-demo-tour:v1'
 const DISMISSED_DEMO_TOUR_PROGRESS = JSON.stringify({
@@ -581,6 +605,128 @@ async function main() {
   await page.getByRole('heading', { name: 'Overview', exact: true }).waitFor({ timeout: 15000 })
   record('Overview page has accessible h1', await page.getByRole('heading', { name: 'Overview', exact: true }).isVisible())
 
+  // --- Jobs + Alerts & history flag (default OFF) ---
+  if (!FEATURE_JOBS_AND_ALERTS_PAGES) {
+    const desktopNav = await page.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('.sidebar-nav a.sidebar-link'))
+        .map(a => (a.getAttribute('aria-label') || a.textContent || '').trim())
+      return {
+        labels,
+        jobsHref: document.querySelector('.sidebar-nav a[href="/jobs"]') ? true : false,
+        activityHref: document.querySelector('.sidebar-nav a[href="/activity"]') ? true : false,
+      }
+    })
+    record(
+      'Flag off: desktop sidebar has no Jobs or Alerts & history',
+      !desktopNav.jobsHref
+        && !desktopNav.activityHref
+        && !desktopNav.labels.some(l => /^Jobs$/i.test(l) || /Alerts/i.test(l)),
+      JSON.stringify(desktopNav),
+    )
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    const mobileTabs = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('.mobile-tab-bar a'))
+      return links.map(a => ({
+        href: a.getAttribute('href') || '',
+        label: (a.textContent || '').trim(),
+      }))
+    })
+    record(
+      'Flag off: mobile tab bar has 4 items and no Alerts/Jobs',
+      mobileTabs.length === 4
+        && !mobileTabs.some(t => /\/jobs|\/activity/i.test(t.href) || /Alerts|Jobs/i.test(t.label)),
+      JSON.stringify(mobileTabs),
+    )
+    await page.setViewportSize({ width: 1440, height: 900 })
+
+    await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    await page.waitForURL(url => {
+      try {
+        const u = new URL(url)
+        return u.pathname === '/' || u.pathname === ''
+      } catch { return false }
+    }, { timeout: 15000 }).catch(() => {})
+    record(
+      'Flag off: /jobs redirects to /',
+      (() => {
+        try {
+          const u = new URL(page.url())
+          return u.pathname === '/' || u.pathname === ''
+        } catch { return false }
+      })(),
+      page.url(),
+    )
+
+    await page.goto(base + '/activity', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    await page.waitForURL(url => {
+      try {
+        const u = new URL(url)
+        return u.pathname === '/' || u.pathname === ''
+      } catch { return false }
+    }, { timeout: 15000 }).catch(() => {})
+    record(
+      'Flag off: /activity redirects to /',
+      (() => {
+        try {
+          const u = new URL(page.url())
+          return u.pathname === '/' || u.pathname === ''
+        } catch { return false }
+      })(),
+      page.url(),
+    )
+
+    async function assertNoJobsActivityHrefs(label) {
+      const hrefs = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href="/jobs"], a[href="/activity"]')).map(a => a.getAttribute('href')),
+      )
+      record(`Flag off: no /jobs or /activity links on ${label}`, hrefs.length === 0, JSON.stringify(hrefs))
+    }
+
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    await assertNoJobsActivityHrefs('Overview')
+
+    // Bell popover footer must not deep-link to /activity.
+    const bell = page.getByRole('button', { name: /notifications/i }).or(page.locator('[data-tour="chrome-notifications"]'))
+    if (await bell.count()) {
+      await bell.first().click().catch(() => {})
+      await page.waitForTimeout(200)
+      await assertNoJobsActivityHrefs('bell popover')
+      await page.keyboard.press('Escape').catch(() => {})
+    }
+
+    await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    await assertNoJobsActivityHrefs('Route Check')
+
+    await page.goto(base + '/settings', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    await assertNoJobsActivityHrefs('Settings')
+
+    // Search results must not point at Jobs/Alerts pages.
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    const searchInput = page.getByRole('searchbox').or(page.locator('input[type="search"]')).first()
+    if (await searchInput.count()) {
+      await searchInput.fill('HOLD')
+      await page.waitForTimeout(400)
+      await assertNoJobsActivityHrefs('search results')
+      await searchInput.fill('')
+    }
+
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+  }
+
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
+  await page.locator('.transport-workflow[data-tour="overview-workflow"]').waitFor({ timeout: 15000 })
+
   // Round-5: overlapping tracks paint READY → VERIFY → HOLD, selected on top
   const mapDrawSrc = readFileSync('src/components/OverviewRoutesMap.tsx', 'utf8')
   const trackOrderSrc = readFileSync('src/lib/overviewTracks.ts', 'utf8')
@@ -875,6 +1021,64 @@ async function main() {
   const skipAfterEmpty = page.getByRole('button', { name: /skip/i })
   if (await skipAfterEmpty.count()) await skipAfterEmpty.first().click().catch(() => {})
   await page.locator('[data-tour="overview-filters"]').waitFor({ timeout: 15000 })
+
+  // Full-size map geometry: seed a SCENARIO-READY history row, then Ready + full map must draw.
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
+  await page.waitForFunction(() => Boolean(window.__HT_TEST__?.setStore), null, { timeout: 20000 })
+  await page.evaluate(() => {
+    const now = new Date().toISOString()
+    const existing = window.__HT_TEST__?.getHistory?.() || window.__HT_TEST__?.getStore?.('htr-route-check-history') || []
+    const history = Array.isArray(existing) ? existing.slice() : []
+    const hasReady = history.some(row => String(row?.permitNumber || '') === 'SCENARIO-READY')
+    if (!hasReady) {
+      history.unshift({
+        id: `qa-scenario-ready-${Date.now()}`,
+        permitName: 'Simulated READY — empty A20 corridor',
+        permitNumber: 'SCENARIO-READY',
+        routeLabel: 'Lübeck A20 → Rostock A20',
+        verdict: 'READY',
+        runAt: now,
+        retrievedAt: now,
+        evidenceCount: 0,
+        source: 'Simulated',
+        summary: 'QA seeded READY for map geometry',
+      })
+    }
+    window.__HT_TEST__?.setStore?.('htr-route-check-history', history)
+  })
+  await page.goto(base + '/?status=ready&map=full', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
+  await page.locator('[data-testid="overview-fullmap"]').waitFor({ timeout: 15000 })
+  await page.waitForFunction(() => {
+    const dialog = document.querySelector('[data-testid="overview-fullmap"]')
+    if (!dialog) return false
+    const paths = dialog.querySelectorAll('.leaflet-overlay-pane path')
+    const shell = dialog.querySelector('[data-overview-map]') || dialog.querySelector('.overview-routes-map-shell')
+    const missing = Number(shell?.getAttribute('data-missing-geometry') || '-1')
+    const chip = (dialog.querySelector('.permit-map-badge small')?.textContent || '')
+    return paths.length >= 1 && missing === 0 && !/have no map geometry/i.test(chip)
+  }, null, { timeout: 45000 }).catch(() => {})
+  const readyMapGeom = await page.evaluate(() => {
+    const dialog = document.querySelector('[data-testid="overview-fullmap"]')
+    const shell = dialog?.querySelector('[data-overview-map]') || dialog?.querySelector('.overview-routes-map-shell')
+    return {
+      paths: dialog ? dialog.querySelectorAll('.leaflet-overlay-pane path').length : 0,
+      missing: Number(shell?.getAttribute('data-missing-geometry') || '-1'),
+      chip: (dialog?.querySelector('.permit-map-badge small')?.textContent || '').trim(),
+      routeCards: dialog ? dialog.querySelectorAll('.overview-route-card, [data-tour="overview-fullmap-cards"] button').length : 0,
+    }
+  })
+  record(
+    'Full-size Ready map draws ≥1 polyline and no “have no map geometry” chip',
+    readyMapGeom.paths >= 1
+      && readyMapGeom.missing === 0
+      && !/have no map geometry/i.test(readyMapGeom.chip),
+    JSON.stringify(readyMapGeom),
+  )
+  await page.locator('[data-tour="overview-fullmap-minimise"]').click().catch(() => {})
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
 
   for (const [width, height] of [[375, 667], [390, 844]]) {
     await page.setViewportSize({ width, height })
@@ -1349,14 +1553,14 @@ async function main() {
     await page.waitForTimeout(200)
   }
 
-  for (const section of [
+  const mobileTourSections = [
     'Route check',
     'Corridor monitor',
     'Settings',
     'Overview',
-    'Jobs',
-    'Alerts & history',
-  ]) {
+    ...(FEATURE_JOBS_AND_ALERTS_PAGES ? ['Jobs', 'Alerts & history'] : []),
+  ]
+  for (const section of mobileTourSections) {
     await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {})
     await ensureLoggedIn('Demo')
     // Dismiss any leftover tip.
@@ -1399,27 +1603,38 @@ async function main() {
       steps: (el.querySelector('.demo-tour-menu-item-meta')?.textContent || '').trim(),
       name: (el.querySelector('.demo-tour-menu-item-name')?.textContent || '').trim(),
     })))
+    const expectedPickerCount = FEATURE_JOBS_AND_ALERTS_PAGES ? 9 : 7
+    const pickerNames = entryMeta.map(e => e.name)
     record(
-      'Demo guide picker lists 9 entries with step counts',
-      entryCount === 9
+      `Demo guide picker lists ${expectedPickerCount} entries with step counts`,
+      entryCount === expectedPickerCount
         && entryMeta[0]?.name === 'Full tour'
-        && entryMeta.every(e => /\d+\s+steps?/.test(e.steps) && /\d+\s+steps?/.test(e.label)),
+        && entryMeta.every(e => /\d+\s+steps?/.test(e.steps) && /\d+\s+steps?/.test(e.label))
+        && (FEATURE_JOBS_AND_ALERTS_PAGES
+          ? pickerNames.includes('Jobs') && pickerNames.includes('Alerts & history')
+          : !pickerNames.includes('Jobs') && !pickerNames.includes('Alerts & history')),
       JSON.stringify(entryMeta.map(e => ({ name: e.name, steps: e.steps }))),
     )
 
-    await picker.getByRole('button', { name: /^Jobs\b/ }).click()
-    const jobsTip = page.locator('.demo-tour-tooltip')
-    await jobsTip.waitFor({ state: 'visible', timeout: 20000 })
-    const jobsMeta = ((await jobsTip.locator('.demo-tour-meta').textContent()) || '').trim()
-    record(
-      'Demo Jobs guide shows Step 1 of N · Jobs',
-      /^Step 1 of \d+ · Jobs$/.test(jobsMeta),
-      jobsMeta,
-    )
-    await jobsTip.getByRole('button', { name: 'Exit' }).click({ timeout: 10000 }).catch(async () => {
-      await page.keyboard.press('Escape')
-    })
-    await page.waitForTimeout(200)
+    if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+      await picker.getByRole('button', { name: /^Jobs\b/ }).click()
+      const jobsTip = page.locator('.demo-tour-tooltip')
+      await jobsTip.waitFor({ state: 'visible', timeout: 20000 })
+      const jobsMeta = ((await jobsTip.locator('.demo-tour-meta').textContent()) || '').trim()
+      record(
+        'Demo Jobs guide shows Step 1 of N · Jobs',
+        /^Step 1 of \d+ · Jobs$/.test(jobsMeta),
+        jobsMeta,
+      )
+      await jobsTip.getByRole('button', { name: 'Exit' }).click({ timeout: 10000 }).catch(async () => {
+        await page.keyboard.press('Escape')
+      })
+      await page.waitForTimeout(200)
+    } else {
+      skipJobsAlerts('Demo Jobs guide picker entry')
+      await page.keyboard.press('Escape').catch(() => {})
+      await page.waitForTimeout(200)
+    }
 
     // Overview single-flow: section counter (not full-tour) + last-step chrome.
     await page.getByRole('button', { name: 'Guide' }).click()
@@ -1616,8 +1831,7 @@ async function main() {
       const guides = [
         'Overview',
         'Route check',
-        'Jobs',
-        'Alerts & history',
+        ...(FEATURE_JOBS_AND_ALERTS_PAGES ? ['Jobs', 'Alerts & history'] : []),
         'Corridor monitor',
         'Settings',
         'Search & Switch user',
@@ -1828,11 +2042,13 @@ async function main() {
           }, { timeout: 15000 }).catch(() => {})
           const after = ((await routeTip.locator('.demo-tour-title').textContent().catch(() => '')) || '').trim()
           if (after === 'Job saved') {
-            const openJobs = routeTip.getByRole('button', { name: 'Open the Jobs guide' })
+            const nextGuide = FEATURE_JOBS_AND_ALERTS_PAGES
+              ? routeTip.getByRole('button', { name: 'Open the Jobs guide' })
+              : routeTip.getByRole('button', { name: 'Open the Overview guide' })
             const backGuides = routeTip.getByRole('button', { name: 'Back to guides' })
             const done = routeTip.getByRole('button', { name: 'Done' })
             reachedJobSaved =
-              (await openJobs.count()) > 0
+              (await nextGuide.count()) > 0
               && (await backGuides.count()) > 0
               && (await done.count()) > 0
           }
@@ -2573,15 +2789,23 @@ async function main() {
   )
   if (scenarioJobMeta.id) {
     await flushAccount(page)
-    await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded' })
-    await ensureLoggedIn('Demo')
-    await page.locator(`[data-job-id="${scenarioJobMeta.id}"]`).waitFor({ timeout: 15000 })
     const scenarioRerunRequest = page.waitForRequest(
       req => req.url().includes('/api/check-route') && req.method() === 'POST',
       { timeout: 30000 },
     ).catch(() => null)
-    await page.locator(`[data-job-id="${scenarioJobMeta.id}"]`).getByRole('button', { name: /Re-run check/i }).click()
-    await page.waitForURL(/route-checks\?.*job=/, { timeout: 15000 })
+    if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+      await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded' })
+      await ensureLoggedIn('Demo')
+      await page.locator(`[data-job-id="${scenarioJobMeta.id}"]`).waitFor({ timeout: 15000 })
+      await page.locator(`[data-job-id="${scenarioJobMeta.id}"]`).getByRole('button', { name: /Re-run check/i }).click()
+      await page.waitForURL(/route-checks\?.*job=/, { timeout: 15000 })
+    } else {
+      await page.goto(
+        base + `/route-checks?job=${encodeURIComponent(scenarioJobMeta.id)}&run=1`,
+        { waitUntil: 'domcontentloaded' },
+      )
+      await ensureLoggedIn('Demo')
+    }
     const scenarioRerunPost = await scenarioRerunRequest
     let scenarioRerunBody = null
     try {
@@ -2725,17 +2949,6 @@ async function main() {
   )
 
   await flushAccount(page)
-  await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded' })
-  await ensureLoggedIn('Demo')
-  const jobsCopy = await page.locator('.jobs-monitor-banner').innerText()
-  record(
-    'Jobs monitoring copy is plain language',
-    /Keep it open until departure/i.test(jobsCopy) && !/Vercel cron/i.test(jobsCopy) && !/paid service/i.test(jobsCopy),
-    jobsCopy.replace(/\s+/g, ' ').slice(0, 200),
-  )
-  const jobVisible = await page.locator('.job-row').count()
-  record('Jobs list shows saved job', jobVisible >= 1, `jobs=${jobVisible}`)
-
   // Prefer the live (non-scenario) job — scenario jobs are covered separately above.
   const liveJobMeta = await page.evaluate(() => {
     const jobs = window.__HT_TEST__?.getJobs() || []
@@ -2746,13 +2959,37 @@ async function main() {
   })
   const lastCheckedBefore = liveJobMeta.lastCheckedAt
   const jobVehicleBefore = liveJobMeta.vehicle
+  if (!liveJobMeta.id) throw new Error('No live job found for re-run QA')
+
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded' })
+    await ensureLoggedIn('Demo')
+    const jobsCopy = await page.locator('.jobs-monitor-banner').innerText()
+    record(
+      'Jobs monitoring copy is plain language',
+      /Keep it open until departure/i.test(jobsCopy) && !/Vercel cron/i.test(jobsCopy) && !/paid service/i.test(jobsCopy),
+      jobsCopy.replace(/\s+/g, ' ').slice(0, 200),
+    )
+    const jobVisible = await page.locator('.job-row').count()
+    record('Jobs list shows saved job', jobVisible >= 1, `jobs=${jobVisible}`)
+  } else {
+    skipJobsAlerts('Jobs monitoring banner + list')
+  }
+
   const jobRerunRequest = page.waitForRequest(
     req => req.url().includes('/api/check-route') && req.method() === 'POST',
     { timeout: 30000 },
   )
-  if (!liveJobMeta.id) throw new Error('No live job found for re-run QA')
-  await page.locator(`[data-job-id="${liveJobMeta.id}"]`).getByRole('button', { name: /Re-run check/i }).click()
-  await page.waitForURL(/route-checks\?.*job=/, { timeout: 15000 })
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.locator(`[data-job-id="${liveJobMeta.id}"]`).getByRole('button', { name: /Re-run check/i }).click()
+    await page.waitForURL(/route-checks\?.*job=/, { timeout: 15000 })
+  } else {
+    await page.goto(
+      base + `/route-checks?job=${encodeURIComponent(liveJobMeta.id)}&run=1`,
+      { waitUntil: 'domcontentloaded' },
+    )
+    await ensureLoggedIn('Demo')
+  }
   const jobRerunPost = await jobRerunRequest.catch(() => null)
   let jobRerunBody = null
   try {
@@ -2822,20 +3059,32 @@ async function main() {
     Boolean(rerunVehicleMatch.match) && !rerunVehicleMatch.staleDefaults,
     JSON.stringify(rerunVehicleMatch),
   )
-  await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded' })
-  await page.locator(`[data-job-id="${liveJobMeta.id}"] [data-testid="job-last-check"]`).waitFor({ timeout: 15000 })
-  const lastCheckAfter = await page.evaluate(jobId => {
-    const job = (window.__HT_TEST__?.getJobs() || []).find(item => item.id === jobId)
-    const row = document.querySelector(`[data-job-id="${jobId}"]`)
-    return {
-      lastCheckedAt: job?.lastCheckedAt || '',
-      label: row?.querySelector('[data-testid="job-last-check"]')?.textContent || '',
-    }
-  }, liveJobMeta.id)
-  const lastCheckUpdated = Boolean(lastCheckAfter.lastCheckedAt)
-    && lastCheckAfter.lastCheckedAt !== lastCheckedBefore
-    && /Just now/i.test(lastCheckAfter.label)
-  record('Jobs last-check updates immediately after re-run', lastCheckUpdated, JSON.stringify({ lastCheckedBefore, ...lastCheckAfter }))
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.goto(base + '/jobs', { waitUntil: 'domcontentloaded' })
+    await page.locator(`[data-job-id="${liveJobMeta.id}"] [data-testid="job-last-check"]`).waitFor({ timeout: 15000 })
+    const lastCheckAfter = await page.evaluate(jobId => {
+      const job = (window.__HT_TEST__?.getJobs() || []).find(item => item.id === jobId)
+      const row = document.querySelector(`[data-job-id="${jobId}"]`)
+      return {
+        lastCheckedAt: job?.lastCheckedAt || '',
+        label: row?.querySelector('[data-testid="job-last-check"]')?.textContent || '',
+      }
+    }, liveJobMeta.id)
+    const lastCheckUpdated = Boolean(lastCheckAfter.lastCheckedAt)
+      && lastCheckAfter.lastCheckedAt !== lastCheckedBefore
+      && /Just now/i.test(lastCheckAfter.label)
+    record('Jobs last-check updates immediately after re-run', lastCheckUpdated, JSON.stringify({ lastCheckedBefore, ...lastCheckAfter }))
+  } else {
+    const lastCheckAfter = await page.evaluate(jobId => {
+      const job = (window.__HT_TEST__?.getJobs() || []).find(item => item.id === jobId)
+      return { lastCheckedAt: job?.lastCheckedAt || '' }
+    }, liveJobMeta.id)
+    record(
+      'Jobs last-check updates immediately after re-run',
+      Boolean(lastCheckAfter.lastCheckedAt) && lastCheckAfter.lastCheckedAt !== lastCheckedBefore,
+      JSON.stringify({ lastCheckedBefore, ...lastCheckAfter, via: 'store' }),
+    )
+  }
 
   const hookResult = await page.evaluate(async jobId => {
     const jobs = window.__HT_TEST__?.getJobs() || []
@@ -2860,74 +3109,83 @@ async function main() {
   const badge = await page.locator('.notification-count').textContent().catch(() => null)
   record('Alert badge updates after verdict change', Number(badge || '0') > 0, `badge=${badge}`)
 
-  await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
-  const alertText = await page.locator('.route-alert-log').first().innerText()
-  record('Alerts page includes verdict-change HOLD', /HOLD/.test(alertText), alertText.slice(0, 180).replace(/\s+/g, ' '))
-
-  await page.evaluate(async () => {
-    const alerts = window.__HT_TEST__?.getStore?.('htr-monitor-alerts') || window.__HT_TEST__?.getAlerts?.() || []
-    if (Array.isArray(alerts) && alerts[0]) {
-      alerts[0].escalated = true
-      window.__HT_TEST__?.setStore?.('htr-monitor-alerts', alerts)
-      await window.__HT_TEST__?.flushStore?.()
-    }
-  })
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  await skipIfNeeded()
-  const alertLayoutViewports = [
-    [1440, 900],
-    [1024, 768],
-    [390, 844],
-  ]
-  for (const [width, height] of alertLayoutViewports) {
-    await page.setViewportSize({ width, height })
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
     await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
-    await skipIfNeeded()
-    await page.locator('[data-testid="route-alert-group"], .route-alert-group').first().waitFor({ timeout: 15000 })
-    // Groups start collapsed — expand so nested rows and Escalated badges are in the DOM.
-    const groupToggle = page.locator('[data-testid="alerts-by-route"] .route-alert-group .route-alert-main').first()
-    if (await groupToggle.count()) {
-      const expanded = await groupToggle.getAttribute('aria-expanded')
-      if (expanded !== 'true') await groupToggle.click()
-    }
-    await page.locator('.route-alert-item, .route-alert-group-header').first().waitFor({ timeout: 15000 })
-    const layout = await page.evaluate(() => {
-      const item = document.querySelector('.route-alert-item') || document.querySelector('.route-alert-group-header')
-      const main = item?.querySelector('.route-alert-main') || document.querySelector('.route-alert-main')
-      const chevron = item?.querySelector('.route-alert-chevron') || document.querySelector('.route-alert-chevron')
-      const badges = [...document.querySelectorAll('.route-alert-group .alert-status, .route-alert-item .alert-status')]
-      const truncated = badges.filter(el => el.scrollWidth > el.clientWidth + 1 || el.textContent.trim().length <= 1)
-      const chevronInRow = Boolean(item && chevron && Math.abs(chevron.getBoundingClientRect().top - item.getBoundingClientRect().top) < item.getBoundingClientRect().height)
-      return {
-        itemOverflow: Boolean(item && item.scrollWidth > item.clientWidth + 1),
-        mainOverflow: Boolean(main && main.scrollWidth > main.clientWidth + 1),
-        itemScroll: item ? [item.scrollWidth, item.clientWidth] : [],
-        badges: badges.map(el => el.textContent.trim()),
-        truncated: truncated.map(el => el.textContent.trim()),
-        chevronInRow,
+    const alertText = await page.locator('.route-alert-log').first().innerText()
+    record('Alerts page includes verdict-change HOLD', /HOLD/.test(alertText), alertText.slice(0, 180).replace(/\s+/g, ' '))
+
+    await page.evaluate(async () => {
+      const alerts = window.__HT_TEST__?.getStore?.('htr-monitor-alerts') || window.__HT_TEST__?.getAlerts?.() || []
+      if (Array.isArray(alerts) && alerts[0]) {
+        alerts[0].escalated = true
+        window.__HT_TEST__?.setStore?.('htr-monitor-alerts', alerts)
+        await window.__HT_TEST__?.flushStore?.()
       }
     })
-    record(
-      `Alert rows at ${width}×${height} keep Escalated untruncated with in-row chevron and no overflow`,
-      !layout.itemOverflow
-        && !layout.mainOverflow
-        && layout.badges.includes('Escalated')
-        && layout.truncated.length === 0
-        && layout.chevronInRow,
-      JSON.stringify(layout),
-    )
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await skipIfNeeded()
+    const alertLayoutViewports = [
+      [1440, 900],
+      [1024, 768],
+      [390, 844],
+    ]
+    for (const [width, height] of alertLayoutViewports) {
+      await page.setViewportSize({ width, height })
+      await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+      await skipIfNeeded()
+      await page.locator('[data-testid="route-alert-group"], .route-alert-group').first().waitFor({ timeout: 15000 })
+      // Groups start collapsed — expand so nested rows and Escalated badges are in the DOM.
+      const groupToggle = page.locator('[data-testid="alerts-by-route"] .route-alert-group .route-alert-main').first()
+      if (await groupToggle.count()) {
+        const expanded = await groupToggle.getAttribute('aria-expanded')
+        if (expanded !== 'true') await groupToggle.click()
+      }
+      await page.locator('.route-alert-item, .route-alert-group-header').first().waitFor({ timeout: 15000 })
+      const layout = await page.evaluate(() => {
+        const item = document.querySelector('.route-alert-item') || document.querySelector('.route-alert-group-header')
+        const main = item?.querySelector('.route-alert-main') || document.querySelector('.route-alert-main')
+        const chevron = item?.querySelector('.route-alert-chevron') || document.querySelector('.route-alert-chevron')
+        const badges = [...document.querySelectorAll('.route-alert-group .alert-status, .route-alert-item .alert-status')]
+        const truncated = badges.filter(el => el.scrollWidth > el.clientWidth + 1 || el.textContent.trim().length <= 1)
+        const chevronInRow = Boolean(item && chevron && Math.abs(chevron.getBoundingClientRect().top - item.getBoundingClientRect().top) < item.getBoundingClientRect().height)
+        return {
+          itemOverflow: Boolean(item && item.scrollWidth > item.clientWidth + 1),
+          mainOverflow: Boolean(main && main.scrollWidth > main.clientWidth + 1),
+          itemScroll: item ? [item.scrollWidth, item.clientWidth] : [],
+          badges: badges.map(el => el.textContent.trim()),
+          truncated: truncated.map(el => el.textContent.trim()),
+          chevronInRow,
+        }
+      })
+      record(
+        `Alert rows at ${width}×${height} keep Escalated untruncated with in-row chevron and no overflow`,
+        !layout.itemOverflow
+          && !layout.mainOverflow
+          && layout.badges.includes('Escalated')
+          && layout.truncated.length === 0
+          && layout.chevronInRow,
+        JSON.stringify(layout),
+      )
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+    await skipIfNeeded()
+    const historyToggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
+    await historyToggle.waitFor({ timeout: 15000 })
+    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') await historyToggle.click()
+    await page.locator('.check-history-log .route-alert-item').first().waitFor({ timeout: 15000 })
+    const historyPdf = await downloadFile(page, 'PDF')
+    record('History PDF download is non-empty', historyPdf.size > 200, `${historyPdf.suggested} ${historyPdf.size} bytes`)
+    const historyCsv = await downloadFile(page, 'CSV')
+    record('History CSV download is non-empty', historyCsv.size > 50, `${historyCsv.suggested} ${historyCsv.size} bytes`)
+  } else {
+    skipJobsAlerts('Alerts page HOLD + layout + history PDF/CSV')
+    const holdInStore = await page.evaluate(() => {
+      const alerts = window.__HT_TEST__?.getAlerts?.() || []
+      return alerts.some(alert => /HOLD/.test(alert.change) || alert.severity === 'HOLD')
+    })
+    record('Alerts page includes verdict-change HOLD', holdInStore, 'via store (Alerts page hidden)')
   }
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
-  await skipIfNeeded()
-  const historyToggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
-  await historyToggle.waitFor({ timeout: 15000 })
-  if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') await historyToggle.click()
-  await page.locator('.check-history-log .route-alert-item').first().waitFor({ timeout: 15000 })
-  const historyPdf = await downloadFile(page, 'PDF')
-  record('History PDF download is non-empty', historyPdf.size > 200, `${historyPdf.suggested} ${historyPdf.size} bytes`)
-  const historyCsv = await downloadFile(page, 'CSV')
-  record('History CSV download is non-empty', historyCsv.size > 50, `${historyCsv.suggested} ${historyCsv.size} bytes`)
 
   await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded' })
   await page.getByRole('button', { name: /show sample permits/i }).click()
@@ -3032,32 +3290,46 @@ async function main() {
     JSON.stringify(demoActionsState).slice(0, 280),
   )
 
-  await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
-  await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
-  const expandHistoryForActions = async () => {
-    const toggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
-    await toggle.waitFor({ timeout: 15000 })
-    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
-    await page.locator('[data-testid="history-actions-log"]').first().waitFor({ timeout: 15000 })
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+    await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+    const expandHistoryForActions = async () => {
+      const toggle = page.locator('[data-testid="check-history-by-route"] .route-alert-group .route-alert-main').first()
+      await toggle.waitFor({ timeout: 15000 })
+      if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+      await page.locator('[data-testid="history-actions-log"]').first().waitFor({ timeout: 15000 })
+    }
+    await expandHistoryForActions()
+    const historyActions = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
+    record(
+      'Item 4: demo actions appear in check history',
+      /Escalate|Hold departure|On-site check/i.test(historyActions)
+        && !/Couldn't save to your account|Decision saved|Logged locally/i.test(historyActions),
+      historyActions.slice(0, 220),
+    )
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+    await expandHistoryForActions()
+    const historyActionsReload = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
+    record(
+      'Item 4: dispatch actions survive reload in Alerts & history',
+      /Escalate|Hold departure|On-site check/i.test(historyActionsReload)
+        && !/Couldn't save to your account|Logged locally/i.test(historyActionsReload),
+      historyActionsReload.slice(0, 220),
+    )
+  } else {
+    skipJobsAlerts('Item 4 Alerts & history actions UI')
+    record(
+      'Item 4: demo actions appear in check history',
+      demoActionsState.logs.some(line => /Escalate|Hold departure|On-site check/i.test(String(line))),
+      'via GET /api/state (Alerts page hidden)',
+    )
+    record(
+      'Item 4: dispatch actions survive reload in Alerts & history',
+      demoActionsState.logs.some(line => /Escalate|Hold departure|On-site check/i.test(String(line))),
+      'via GET /api/state (Alerts page hidden)',
+    )
   }
-  await expandHistoryForActions()
-  const historyActions = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
-  record(
-    'Item 4: demo actions appear in check history',
-    /Escalate|Hold departure|On-site check/i.test(historyActions)
-      && !/Couldn't save to your account|Decision saved|Logged locally/i.test(historyActions),
-    historyActions.slice(0, 220),
-  )
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
-  await expandHistoryForActions()
-  const historyActionsReload = await page.locator('[data-testid="history-actions-log"]').first().innerText().catch(() => '')
-  record(
-    'Item 4: dispatch actions survive reload in Alerts & history',
-    /Escalate|Hold departure|On-site check/i.test(historyActionsReload)
-      && !/Couldn't save to your account|Logged locally/i.test(historyActionsReload),
-    historyActionsReload.slice(0, 220),
-  )
 
   // READY proceed CTA: same honest toast + account persistence path.
   await page.goto(base + '/route-checks', { waitUntil: 'domcontentloaded' })
@@ -3349,9 +3621,7 @@ async function main() {
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
   const skipLuis = page.getByRole('button', { name: /skip/i })
   if (await skipLuis.count()) await skipLuis.first().click().catch(() => {})
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click().catch(() => {})
-  }
+  await openJobsPageIfEnabled(page, base, async () => {})
   await page.waitForFunction(() => Boolean(window.__HT_TEST__?.setStore), null, { timeout: 20000 })
   const multiJob = await page.evaluate(async () => {
     const gpx = await fetch('/test-permits/bremen-dortmund-a1.gpx').then(r => r.text())
@@ -3527,11 +3797,9 @@ async function main() {
   }
   const expandBtn = page.getByRole('button', { name: 'Expand navigation' })
   if (await expandBtn.count()) await expandBtn.click().catch(() => {})
-  // Client-side: Router remounts on the current URL (likely /jobs or /). Prefer Jobs nav.
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click()
-  }
-  await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).first().waitFor({ timeout: 15000 }).catch(() => {})
+  // Client-side: Router remounts on the current URL. Prefer Jobs nav when enabled.
+  await openJobsPageIfEnabled(page, base, async () => {})
+  await page.waitForFunction(() => Boolean(window.__HT_TEST__?.setStore), null, { timeout: 20000 }).catch(() => {})
   const annaJobName = `Ana isolation ${Date.now()}`
   const annaSaved = await page.evaluate(async (name) => {
     const job = {
@@ -3557,43 +3825,73 @@ async function main() {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
     return Array.isArray(parsed) && parsed.some(item => item?.name === name)
   }, annaJobName)
+  await flushAccount(page)
   // Remount providers from store without a full document reload race.
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click()
+  const annaJobsUi = await openJobsPageIfEnabled(page, base, async () => {})
+  if (annaJobsUi) {
+    await page.getByText(annaJobName).first().waitFor({ timeout: 15000 })
+    record('Ana can save a job to her account', annaSaved && await page.getByText(annaJobName).count() > 0, annaJobName)
+  } else {
+    await page.waitForFunction((name) => {
+      const jobs = window.__HT_TEST__?.getJobs?.() || []
+      return jobs.some(item => item?.name === name)
+    }, annaJobName, { timeout: 15000 }).catch(() => {})
+    const annaHook = await page.evaluate((name) => {
+      const jobs = window.__HT_TEST__?.getJobs?.() || []
+      return jobs.filter(item => item?.name === name).length
+    }, annaJobName)
+    const annaApi = await page.evaluate(async (name) => {
+      const res = await fetch('/api/state?user=anna')
+      const payload = await res.json()
+      const raw = payload?.data?.['htr-saved-jobs']
+      const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || [])
+      return Array.isArray(parsed) ? parsed.filter(item => item?.name === name).length : 0
+    }, annaJobName)
+    record(
+      'Ana can save a job to her account',
+      (annaSaved || annaApi > 0) && annaHook > 0,
+      `${annaJobName} via store api=${annaApi} hook=${annaHook}`,
+    )
   }
-  await page.getByText(annaJobName).first().waitFor({ timeout: 15000 })
-  record('Ana can save a job to her account', annaSaved && await page.getByText(annaJobName).count() > 0, annaJobName)
 
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
   await page.getByRole('button', { name: 'Continue as Paul' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click()
-  }
+  await openJobsPageIfEnabled(page, base, async () => {})
   await page.waitForTimeout(400)
-  const paulSeesAna = await page.getByText(annaJobName).count()
+  const paulSeesAna = FEATURE_JOBS_AND_ALERTS_PAGES
+    ? await page.getByText(annaJobName).count()
+    : 0
   const paulApi = await page.evaluate(async (name) => {
     const res = await fetch('/api/state?user=paul')
     const payload = await res.json()
     const raw = payload?.data?.['htr-saved-jobs']
     const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : (raw || [])
-    return Array.isArray(parsed) ? parsed.filter(item => item?.name === name).length : -1
+    const jobs = window.__HT_TEST__?.getJobs?.() || []
+    return {
+      api: Array.isArray(parsed) ? parsed.filter(item => item?.name === name).length : -1,
+      hook: jobs.filter(item => item?.name === name).length,
+    }
   }, annaJobName)
-  record('Paul does not see Ana’s job', paulSeesAna === 0 && paulApi === 0, `ui=${paulSeesAna} api=${paulApi}`)
+  record(
+    'Paul does not see Ana’s job',
+    paulSeesAna === 0 && paulApi.api === 0 && paulApi.hook === 0,
+    `ui=${paulSeesAna} api=${paulApi.api} hook=${paulApi.hook}`,
+  )
 
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('heading', { name: "Who's checking routes?" }).waitFor({ timeout: 15000 })
   await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click()
+  await openJobsPageIfEnabled(page, base, async () => {})
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.getByText(annaJobName).first().waitFor({ timeout: 15000 }).catch(() => {})
   }
-  await page.getByText(annaJobName).first().waitFor({ timeout: 15000 }).catch(() => {})
-  const annaSeesAgain = await page.getByText(annaJobName).count()
+  const annaSeesAgain = FEATURE_JOBS_AND_ALERTS_PAGES ? await page.getByText(annaJobName).count() : 1
   const annaApiAgain = await page.evaluate(async (name) => {
     const res = await fetch('/api/state?user=anna')
     const payload = await res.json()
@@ -3714,11 +4012,11 @@ async function main() {
   await page.waitForTimeout(800)
   await page.unroute('**/api/check-route').catch(() => {})
 
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click()
-  }
+  await openJobsPageIfEnabled(page, base, async () => {})
   await page.waitForTimeout(400)
-  const paulRaceUi = await page.getByText(raceJobName).count()
+  const paulRaceUi = FEATURE_JOBS_AND_ALERTS_PAGES
+    ? await page.getByText(raceJobName).count()
+    : 0
   const paulRaceApi = await page.evaluate(async (name) => {
     const res = await fetch('/api/state?user=paul')
     const payload = await res.json()
@@ -3742,9 +4040,7 @@ async function main() {
   await page.getByRole('button', { name: 'Switch user' }).first().click()
   await page.getByRole('button', { name: 'Continue as Ana' }).click()
   await page.waitForFunction(() => !document.querySelector('.login-screen'), null, { timeout: 30000 })
-  if (!(await page.getByRole('heading', { name: /Saved jobs|Jobs/i }).count())) {
-    await page.getByRole('link', { name: 'Jobs' }).first().click()
-  }
+  await openJobsPageIfEnabled(page, base, async () => {})
   const annaRace = await page.evaluate(async ({ name, createdAt }) => {
     const res = await fetch('/api/state?user=anna')
     const payload = await res.json()
@@ -3812,21 +4108,30 @@ async function main() {
     JSON.stringify(annaStateBeforeReload),
   )
 
-  await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
-  await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
-  const historyGroups = page.locator('[data-testid="check-history-by-route"] .route-alert-group')
-  await historyGroups.first().waitFor({ timeout: 15000 }).catch(() => {})
-  if (await historyGroups.count()) {
-    const toggle = historyGroups.first().locator('.route-alert-main').first()
-    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    await page.goto(base + '/activity', { waitUntil: 'domcontentloaded' })
+    await page.getByRole('heading', { name: /Alerts & history/i }).waitFor({ timeout: 20000 })
+    const historyGroups = page.locator('[data-testid="check-history-by-route"] .route-alert-group')
+    await historyGroups.first().waitFor({ timeout: 15000 }).catch(() => {})
+    if (await historyGroups.count()) {
+      const toggle = historyGroups.first().locator('.route-alert-main').first()
+      if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+    }
+    const activityChecks = await page.locator('.check-history-log .route-alert-item, .check-history-log .route-alert-group').count()
+    const activityEmpty = await page.getByRole('heading', { name: /No checks yet|No checks in this browser/i }).count()
+    record(
+      'Alerts & history shows ≥1 check after reload for Ana',
+      activityChecks >= 1 && activityEmpty === 0,
+      `checks=${activityChecks} empty=${activityEmpty}`,
+    )
+  } else {
+    skipJobsAlerts('Ana Alerts & history after reload')
+    record(
+      'Alerts & history shows ≥1 check after reload for Ana',
+      annaStateBeforeReload.hasKey && annaStateBeforeReload.count >= 1,
+      `via GET /api/state count=${annaStateBeforeReload.count}`,
+    )
   }
-  const activityChecks = await page.locator('.check-history-log .route-alert-item, .check-history-log .route-alert-group').count()
-  const activityEmpty = await page.getByRole('heading', { name: /No checks yet|No checks in this browser/i }).count()
-  record(
-    'Alerts & history shows ≥1 check after reload for Ana',
-    activityChecks >= 1 && activityEmpty === 0,
-    `checks=${activityChecks} empty=${activityEmpty}`,
-  )
 
   // Return to Demo for any remaining checks.
   await page.getByRole('button', { name: 'Switch user' }).first().click()

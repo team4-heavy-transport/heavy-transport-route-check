@@ -317,12 +317,74 @@ function parseJobGeometry(gpxContent: string | undefined | null): LatLng[] | nul
 }
 
 function findPermitByNumber(
-  examplePermits: TestPermit[],
+  permits: TestPermit[],
   permitNumber: string,
 ): TestPermit | undefined {
   const needle = permitNumber.trim().toLowerCase()
   if (!needle) return undefined
-  return examplePermits.find(p => p.permitNumber.trim().toLowerCase() === needle)
+  return permits.find(p => p.permitNumber.trim().toLowerCase() === needle)
+}
+
+/** Case/diacritics-insensitive place string; treats "→" and "->" as separators when splitting labels. */
+export function normalisePlaceKey(value: string | null | undefined): string {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+/**
+ * Loose origin/destination match: exact normalised equality, or one end contains the other
+ * (so "Hof A9" matches permit origin "Hof A9" or short "Hof").
+ */
+export function endsMatchPermit(
+  origin: string | null | undefined,
+  destination: string | null | undefined,
+  permit: Pick<TestPermit, 'origin' | 'destination' | 'originShort' | 'destinationShort'>,
+): boolean {
+  const o = normalisePlaceKey(origin)
+  const d = normalisePlaceKey(destination)
+  if (!o || !d) return false
+
+  const candidates: Array<[string, string]> = [
+    [normalisePlaceKey(permit.origin), normalisePlaceKey(permit.destination)],
+    [normalisePlaceKey(permit.originShort), normalisePlaceKey(permit.destinationShort)],
+  ]
+
+  return candidates.some(([po, pd]) => {
+    if (!po || !pd) return false
+    const originOk = o === po || o.includes(po) || po.includes(o)
+    const destOk = d === pd || d.includes(pd) || pd.includes(d)
+    return originOk && destOk
+  })
+}
+
+/**
+ * Resolve a catalogue permit for geometry/vehicle: prefer permitNumber, else origin+destination.
+ */
+export function findGeometryPermit(
+  permits: TestPermit[],
+  opts: {
+    permitNumber?: string | null
+    origin?: string | null
+    destination?: string | null
+    routeLabel?: string | null
+  },
+): TestPermit | undefined {
+  const byNumber = findPermitByNumber(permits, opts.permitNumber || '')
+  if (byNumber) return byNumber
+
+  let origin = (opts.origin || '').trim()
+  let destination = (opts.destination || '').trim()
+  if ((!origin || !destination) && opts.routeLabel) {
+    const split = splitRouteLabel(opts.routeLabel)
+    origin = origin || split.origin
+    destination = destination || split.destination
+  }
+  if (!origin || !destination) return undefined
+  return permits.find(p => endsMatchPermit(origin, destination, p))
 }
 
 /**
@@ -379,7 +441,7 @@ function exampleToRoute(permit: TestPermit): OverviewRoute {
 }
 
 function splitRouteLabel(label: string | undefined | null): { origin: string; destination: string } {
-  const parts = (label || '').split(/\s*→\s*/)
+  const parts = (label || '').split(/\s*(?:→|->)\s*/)
   return {
     origin: parts[0]?.trim() || '',
     destination: parts[1]?.trim() || '',
@@ -465,10 +527,17 @@ export function sortOverviewRoutes(routes: OverviewRoute[]): OverviewRoute[] {
 export function buildOverviewRoutes(input: {
   jobs: SavedJob[]
   history: CheckHistoryRecord[]
+  /** Sample live permits used only for the empty-account example fallback. */
   examplePermits: TestPermit[]
+  /**
+   * Catalogue used to resolve gpxFile / vehicle / corridor for jobs and checks.
+   * Prefer live + scenario permits (excludes invalid). Falls back to examplePermits.
+   */
+  geometryPermits?: TestPermit[]
   alerts?: MonitoringAlert[]
 }): OverviewRoute[] {
   const alerts = input.alerts || []
+  const geometryPermits = input.geometryPermits ?? input.examplePermits
   const byId = new Map<string, OverviewRoute>()
   const { jobChecks, remainingOrphans } = attachOrphanChecksToJobs(input.jobs, input.history)
 
@@ -481,10 +550,16 @@ export function buildOverviewRoutes(input: {
     const status = latest?.verdict ?? job.lastVerdict ?? null
     const lastCheckedAt = latest?.runAt ?? job.lastCheckedAt ?? null
     const evidence = latest?.evidence || []
-    const permit = findPermitByNumber(input.examplePermits, job.permitNumber)
+    const routeLabel = `${job.origin} → ${job.destination}`
+    const permit = findGeometryPermit(geometryPermits, {
+      permitNumber: job.permitNumber,
+      origin: job.origin,
+      destination: job.destination,
+      routeLabel,
+    })
+    // Prefer parsed job GPX; fall back to permit file when content is missing or unparseable.
     const geometry = parseJobGeometry(job.gpxContent)
     const checkIds = checks.map(c => c.id)
-    const routeLabel = `${job.origin} → ${job.destination}`
     const routeAlerts = alertsForRoute(alerts, {
       routeId: job.id,
       jobId: job.id,
@@ -518,7 +593,7 @@ export function buildOverviewRoutes(input: {
       addedAt: job.createdAt,
       lastCheckedAt,
       plannedDeparture: job.plannedDeparture || null,
-      vehicle: job.vehicle,
+      vehicle: job.vehicle ?? permit?.vehicle ?? null,
       latestEvidence: evidence,
       summaryItems: summary.items,
       summaryFallback: summary.fallback,
@@ -546,11 +621,16 @@ export function buildOverviewRoutes(input: {
     const sorted = [...records].sort((a, b) => Date.parse(b.runAt) - Date.parse(a.runAt))
     const latest = sorted[0]
     const earliest = [...records].sort((a, b) => Date.parse(a.runAt) - Date.parse(b.runAt))[0]
-    const permit = findPermitByNumber(input.examplePermits, latest.permitNumber || '')
     const evidence = latest.evidence || []
     const { origin: labelOrigin, destination: labelDestination } = splitRouteLabel(latest.routeLabel)
     const origin = labelOrigin || latest.permitName || ''
     const destination = labelDestination || ''
+    const permit = findGeometryPermit(geometryPermits, {
+      permitNumber: latest.permitNumber,
+      origin,
+      destination,
+      routeLabel: latest.routeLabel,
+    })
     const checkIds = records.map(r => r.id)
     const routeAlerts = alertsForRoute(alerts, {
       routeId: key,
@@ -603,7 +683,7 @@ export function buildOverviewRoutes(input: {
     return sortOverviewRoutes(routes)
   }
 
-  // Empty account → example permits in the same list.
+  // Empty account → example permits in the same list (not the full geometry catalogue).
   return input.examplePermits.map(exampleToRoute)
 }
 

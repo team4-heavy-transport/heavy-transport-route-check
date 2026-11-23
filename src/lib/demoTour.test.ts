@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { APP_USERS } from './users.ts'
 import { DEMO_TOUR_USER_ID, isDemoTourUser } from './demoTourGate.ts'
+import { FEATURE_JOBS_AND_ALERTS_PAGES } from './featureFlags.ts'
 import {
   DEMO_TOUR_STORAGE_KEY,
   EMPTY_TOUR_PROGRESS,
@@ -13,9 +14,11 @@ import {
   acknowledgeWelcome,
   completedSectionsAfterFullWalk,
   dismissWelcome,
+  effectiveTourStep,
   flowAccessibleName,
   isFlowDone,
   isFullTourDone,
+  isTourSectionEnabled,
   lastStepIdForSection,
   markSectionComplete,
   nextIncompleteFlowId,
@@ -26,6 +29,8 @@ import {
   stepsForFullTour,
   stepsForSection,
   tourFlowEntries,
+  visibleTourSectionOrder,
+  visibleTourSections,
   writeTourProgress,
   TOUR_FLOW_DESCRIPTIONS,
 } from './demoTour.ts'
@@ -142,10 +147,11 @@ test('tour root portals to body with a top-most stacking layer', () => {
   assert.match(tourCss, /--demo-tour-z-tooltip:\s*2147483010/)
 })
 
-test('full tour walk marks every section complete', () => {
+test('full tour walk marks every visible section complete', () => {
   const fullSteps = stepsForFullTour()
+  const expected = visibleTourSectionOrder()
   const done = completedSectionsAfterFullWalk(fullSteps)
-  assert.deepEqual(done, [...TOUR_SECTION_ORDER])
+  assert.deepEqual(done, [...expected])
 
   const storage = fakeStorage()
   for (let i = 0; i < fullSteps.length; i++) {
@@ -154,7 +160,35 @@ test('full tour walk marks every section complete', () => {
     }
   }
   const progress = readTourProgress(storage)
-  assert.deepEqual(progress.completedSections, [...TOUR_SECTION_ORDER])
+  assert.deepEqual(progress.completedSections, [...expected])
+})
+
+test('Jobs and Alerts tour sections are gated by FEATURE_JOBS_AND_ALERTS_PAGES', () => {
+  assert.equal(isTourSectionEnabled('jobs'), FEATURE_JOBS_AND_ALERTS_PAGES)
+  assert.equal(isTourSectionEnabled('alerts'), FEATURE_JOBS_AND_ALERTS_PAGES)
+  assert.equal(isTourSectionEnabled('overview'), true)
+
+  // Source defs keep jobs/alerts steps even when the flag is off.
+  assert.ok(TOUR_STEPS.some(s => s.section === 'jobs'))
+  assert.ok(TOUR_STEPS.some(s => s.section === 'alerts'))
+  assert.ok(TOUR_SECTIONS.some(s => s.id === 'jobs'))
+
+  if (!FEATURE_JOBS_AND_ALERTS_PAGES) {
+    assert.equal(stepsForSection('jobs').length, 0)
+    assert.equal(stepsForSection('alerts').length, 0)
+    assert.ok(!visibleTourSections().some(s => s.id === 'jobs' || s.id === 'alerts'))
+    assert.ok(!stepsForFullTour().some(s => s.section === 'jobs' || s.section === 'alerts'))
+    assert.ok(!tourFlowEntries().some(e => e.id === 'jobs' || e.id === 'alerts'))
+
+    const saved = effectiveTourStep(TOUR_STEPS.find(s => s.id === 'route-job-saved')!)
+    assert.match(saved.body, /Upcoming routes/i)
+    assert.equal(saved.route, '/route-checks')
+    assert.equal(saved.nextFlowCta?.section, 'overview')
+    assert.doesNotMatch(saved.body, /\bJobs\b/)
+
+    const bell = effectiveTourStep(TOUR_STEPS.find(s => s.id === 'chrome-notifications')!)
+    assert.doesNotMatch(bell.body, /Alerts & history/i)
+  }
 })
 
 test('leaving the last step of a section marks that section', () => {
@@ -171,11 +205,19 @@ test('leaving the last step of a section marks that section', () => {
   assert.deepEqual(sectionsCompletedByAdvance(TOUR_STEPS, firstOverview, firstOverview + 1), [])
 
   // Finishing a single-section guide marks that section.
-  const jobs = stepsForSection('jobs')
-  assert.deepEqual(
-    sectionsCompletedByAdvance(jobs, jobs.length - 1, jobs.length),
-    ['jobs'],
-  )
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    const jobs = stepsForSection('jobs')
+    assert.deepEqual(
+      sectionsCompletedByAdvance(jobs, jobs.length - 1, jobs.length),
+      ['jobs'],
+    )
+  } else {
+    const corridor = stepsForSection('corridor')
+    assert.deepEqual(
+      sectionsCompletedByAdvance(corridor, corridor.length - 1, corridor.length),
+      ['corridor'],
+    )
+  }
 })
 
 test('no tour step anchors a known-tall page/section container', () => {
@@ -217,7 +259,8 @@ test('chrome-switch has mobile copy pointing at the header initials chip', () =>
 
 test('flow picker list order and step counts derive from step definitions', () => {
   const flows = tourFlowEntries()
-  assert.equal(flows.length, 1 + TOUR_SECTIONS.length)
+  const sections = visibleTourSections()
+  assert.equal(flows.length, 1 + sections.length)
   assert.equal(flows[0].id, 'full')
   assert.equal(flows[0].label, 'Full tour')
   assert.equal(flows[0].stepCount, stepsForFullTour().length)
@@ -226,7 +269,7 @@ test('flow picker list order and step counts derive from step definitions', () =
   const sectionFlows = flows.slice(1)
   assert.deepEqual(
     sectionFlows.map(f => f.id),
-    [...TOUR_SECTION_ORDER],
+    visibleTourSectionOrder(),
   )
   for (const entry of sectionFlows) {
     assert.equal(entry.stepCount, stepsForSection(entry.id as typeof TOUR_SECTION_ORDER[number]).length)
@@ -234,16 +277,21 @@ test('flow picker list order and step counts derive from step definitions', () =
     assert.match(entry.description, /[a-z]/i)
   }
 
-  const jobs = flows.find(f => f.id === 'jobs')
-  assert.ok(jobs)
-  assert.equal(
-    flowAccessibleName(jobs, false),
-    `Jobs, ${jobs.stepCount} steps`,
-  )
-  assert.equal(
-    flowAccessibleName(jobs, true),
-    `Jobs, ${jobs.stepCount} steps, done`,
-  )
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    const jobs = flows.find(f => f.id === 'jobs')
+    assert.ok(jobs)
+    assert.equal(
+      flowAccessibleName(jobs, false),
+      `Jobs, ${jobs.stepCount} steps`,
+    )
+    assert.equal(
+      flowAccessibleName(jobs, true),
+      `Jobs, ${jobs.stepCount} steps, done`,
+    )
+  } else {
+    assert.equal(flows.find(f => f.id === 'jobs'), undefined)
+    assert.equal(flows.find(f => f.id === 'alerts'), undefined)
+  }
 })
 
 test('Route check single flow ends on Job saved; full tour skips that closer', () => {
@@ -254,7 +302,10 @@ test('Route check single flow ends on Job saved; full tour skips that closer', (
   assert.ok(routeSteps.some(s => s.id === 'route-open-fullmap'))
   assert.ok(routeSteps[routeSteps.length - 2]?.doItLabel)
   assert.equal(routeSteps[routeSteps.length - 1]?.doItLabel, undefined)
-  assert.equal(routeSteps[routeSteps.length - 1]?.nextFlowCta?.section, 'jobs')
+  assert.equal(
+    routeSteps[routeSteps.length - 1]?.nextFlowCta?.section,
+    FEATURE_JOBS_AND_ALERTS_PAGES ? 'jobs' : 'overview',
+  )
 
   const fullSteps = stepsForFullTour()
   assert.ok(!fullSteps.some(s => s.id === 'route-job-saved'))
@@ -263,11 +314,15 @@ test('Route check single flow ends on Job saved; full tour skips that closer', (
   assert.equal(routeInFull[routeInFull.length - 1]?.id, 'route-save-submit')
   const saveIdx = fullSteps.findIndex(s => s.id === 'route-save-submit')
   assert.ok(saveIdx >= 0)
-  assert.equal(fullSteps[saveIdx + 1]?.section, 'jobs')
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    assert.equal(fullSteps[saveIdx + 1]?.section, 'jobs')
+  } else {
+    assert.equal(fullSteps[saveIdx + 1]?.section, 'corridor')
+  }
 })
 
 test('final step of every single flow has no do-it action', () => {
-  for (const section of TOUR_SECTION_ORDER) {
+  for (const section of visibleTourSectionOrder()) {
     const steps = stepsForSection(section)
     const last = steps[steps.length - 1]
     assert.ok(last, section)
@@ -295,28 +350,32 @@ test('picker and step copy avoid CTA jargon', () => {
   assert.equal(stepsForSection('overview').length, 8)
 })
 
-test('completing a single flow marks only that flow; full tour done = all flows', () => {
+test('completing a single flow marks only that flow; full tour done = all visible flows', () => {
   const storage = fakeStorage()
-  assert.equal(isFlowDone('jobs', readTourProgress(storage)), false)
+  const order = visibleTourSectionOrder()
   assert.equal(isFullTourDone(readTourProgress(storage)), false)
 
-  markSectionComplete('jobs', storage)
-  const afterJobs = readTourProgress(storage)
-  assert.deepEqual(afterJobs.completedSections, ['jobs'])
-  assert.equal(isFlowDone('jobs', afterJobs), true)
-  assert.equal(isFlowDone('overview', afterJobs), false)
-  assert.equal(isFlowDone('full', afterJobs), false)
-  assert.equal(isFullTourDone(afterJobs), false)
-  assert.equal(nextIncompleteFlowId(afterJobs), 'overview')
+  if (FEATURE_JOBS_AND_ALERTS_PAGES) {
+    assert.equal(isFlowDone('jobs', readTourProgress(storage)), false)
+    markSectionComplete('jobs', storage)
+    const afterJobs = readTourProgress(storage)
+    assert.deepEqual(afterJobs.completedSections, ['jobs'])
+    assert.equal(isFlowDone('jobs', afterJobs), true)
+    assert.equal(isFlowDone('overview', afterJobs), false)
+    assert.equal(isFlowDone('full', afterJobs), false)
+    assert.equal(isFullTourDone(afterJobs), false)
+    assert.equal(nextIncompleteFlowId(afterJobs), 'overview')
+  } else {
+    assert.equal(isFlowDone('jobs', readTourProgress(storage)), true)
+  }
 
-  for (const id of TOUR_SECTION_ORDER) {
+  for (const id of order) {
     markSectionComplete(id, storage)
   }
   const allDone = readTourProgress(storage)
-  for (const id of TOUR_SECTION_ORDER) {
+  for (const id of order) {
     assert.ok(allDone.completedSections.includes(id), `missing ${id}`)
   }
-  assert.equal(allDone.completedSections.length, TOUR_SECTION_ORDER.length)
   assert.equal(isFullTourDone(allDone), true)
   assert.equal(isFlowDone('full', allDone), true)
   assert.equal(nextIncompleteFlowId(allDone), 'full')

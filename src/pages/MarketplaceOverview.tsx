@@ -38,7 +38,7 @@ import {
   type OverviewRoute,
   type OverviewStatusFilter,
 } from '../lib/overviewRoutes'
-import { sampleTestPermits } from '../lib/routeCheck'
+import { geometryTestPermits, sampleTestPermits } from '../lib/routeCheck'
 
 const MOBILE_LIST_CAP = 5
 
@@ -365,9 +365,6 @@ function AlertGroups({ alerts }: { alerts: OverviewRoute['alerts'] }) {
           {emptyCount === 1 ? '1 empty severity group hidden' : `${emptyCount} empty severity groups hidden`}
         </p>
       ) : null}
-      <Link to="/activity" className="overview-route-open overview-alerts-link">
-        Open in Alerts &amp; history <ArrowRight size={14} aria-hidden />
-      </Link>
     </div>
   )
 }
@@ -640,7 +637,14 @@ export default function MarketplaceOverview() {
   const routeParam = searchParams.get('route')
 
   const allRoutes = useMemo(
-    () => buildOverviewRoutes({ jobs, history, examplePermits: sampleTestPermits, alerts }),
+    () =>
+      buildOverviewRoutes({
+        jobs,
+        history,
+        examplePermits: sampleTestPermits,
+        geometryPermits: geometryTestPermits,
+        alerts,
+      }),
     [jobs, history, alerts],
   )
   const showingExamples = allRoutes.length > 0 && allRoutes.every(r => r.source === 'example')

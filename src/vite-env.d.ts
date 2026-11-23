@@ -1,5 +1,13 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_FEATURE_JOBS_AND_ALERTS_PAGES?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 export {}
 
 declare global {

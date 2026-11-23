@@ -1,5 +1,6 @@
 import { APP_USERS } from './users'
 import { DEMO_TOUR_USER_ID } from './demoTourGate'
+import { FEATURE_JOBS_AND_ALERTS_PAGES } from './featureFlags'
 
 export { DEMO_TOUR_USER_ID, isDemoTourUser } from './demoTourGate'
 
@@ -18,6 +19,9 @@ export const TOUR_SECTION_ORDER = [
 ] as const
 
 export type TourSectionId = (typeof TOUR_SECTION_ORDER)[number]
+
+/** Sections gated behind `FEATURE_JOBS_AND_ALERTS_PAGES` (kept in defs; filtered when off). */
+const FLAGGED_TOUR_SECTIONS: ReadonlySet<TourSectionId> = new Set(['jobs', 'alerts'])
 
 export type TourSectionMeta = {
   id: TourSectionId
@@ -599,17 +603,59 @@ export function acknowledgeWelcome(storage?: StorageLike | null): DemoTourProgre
   return next
 }
 
+export function isTourSectionEnabled(section: TourSectionId): boolean {
+  if (FLAGGED_TOUR_SECTIONS.has(section)) return FEATURE_JOBS_AND_ALERTS_PAGES
+  return true
+}
+
+/** Section metas offered in the picker / full tour (flag-filtered). */
+export function visibleTourSections(): TourSectionMeta[] {
+  return TOUR_SECTIONS.filter(section => isTourSectionEnabled(section.id))
+}
+
+/** Section order for full-tour completion (flag-filtered). */
+export function visibleTourSectionOrder(): TourSectionId[] {
+  return TOUR_SECTION_ORDER.filter(isTourSectionEnabled)
+}
+
+/**
+ * Adjust steps that reference Jobs / Alerts when those pages are hidden.
+ * Source defs stay intact; filtering rewrites copy and next-flow CTAs.
+ */
+export function effectiveTourStep(step: TourStepDef): TourStepDef {
+  if (step.id === 'route-job-saved' && !FEATURE_JOBS_AND_ALERTS_PAGES) {
+    return {
+      ...step,
+      body: 'Your saved job now appears in Upcoming routes.',
+      // Stay on Route check (do not bounce to /jobs); Overview is offered as next guide.
+      route: '/route-checks',
+      nextFlowCta: { label: 'Open the Overview guide', section: 'overview' },
+    }
+  }
+  if (step.id === 'chrome-notifications' && !FEATURE_JOBS_AND_ALERTS_PAGES) {
+    return {
+      ...step,
+      body: 'Recent HOLD and VERIFY alerts appear here. Open the routes overview for the full picture.',
+    }
+  }
+  return step
+}
+
 export function stepsForSection(section: TourSectionId): TourStepDef[] {
-  return TOUR_STEPS.filter(step => step.section === section)
+  if (!isTourSectionEnabled(section)) return []
+  return TOUR_STEPS.filter(step => step.section === section).map(effectiveTourStep)
 }
 
-/** Full tour step list — excludes single-flow-only closing steps. */
+/** Full tour step list — excludes single-flow-only closing steps; flag-filtered. */
 export function stepsForFullTour(): TourStepDef[] {
-  return TOUR_STEPS.filter(step => !step.singleFlowOnly)
+  return TOUR_STEPS
+    .filter(step => !step.singleFlowOnly && isTourSectionEnabled(step.section))
+    .map(effectiveTourStep)
 }
 
-/** Picker entries: Full tour first, then each section guide in order. */
+/** Picker entries: Full tour first, then each visible section guide in order. */
 export function tourFlowEntries(): TourFlowEntry[] {
+  const sections = visibleTourSections()
   return [
     {
       id: 'full',
@@ -617,7 +663,7 @@ export function tourFlowEntries(): TourFlowEntry[] {
       description: TOUR_FLOW_DESCRIPTIONS.full,
       stepCount: stepsForFullTour().length,
     },
-    ...TOUR_SECTIONS.map(section => ({
+    ...sections.map(section => ({
       id: section.id as TourFlowId,
       label: section.label,
       description: TOUR_FLOW_DESCRIPTIONS[section.id],
@@ -634,11 +680,12 @@ export function isSectionDone(
 }
 
 export function isFullTourDone(progress: DemoTourProgress): boolean {
-  return TOUR_SECTION_ORDER.every(id => progress.completedSections.includes(id))
+  return visibleTourSectionOrder().every(id => progress.completedSections.includes(id))
 }
 
 export function isFlowDone(flowId: TourFlowId, progress: DemoTourProgress): boolean {
   if (flowId === 'full') return isFullTourDone(progress)
+  if (!isTourSectionEnabled(flowId)) return true
   return isSectionDone(flowId, progress)
 }
 
@@ -650,7 +697,7 @@ export function flowAccessibleName(entry: TourFlowEntry, done: boolean): string 
 
 /** Next incomplete section for picker focus; `full` when everything is done. */
 export function nextIncompleteFlowId(progress: DemoTourProgress): TourFlowId {
-  for (const id of TOUR_SECTION_ORDER) {
+  for (const id of visibleTourSectionOrder()) {
     if (!progress.completedSections.includes(id)) return id
   }
   return 'full'
@@ -703,7 +750,7 @@ export function completedSectionsAfterFullWalk(
       done.add(section)
     }
   }
-  return TOUR_SECTION_ORDER.filter(id => done.has(id))
+  return visibleTourSectionOrder().filter(id => done.has(id))
 }
 
 /** Page/section containers that must not be used as tour anchors (too tall). */
