@@ -12,6 +12,8 @@ export type OverviewSummaryItem = {
   id: string
   label: string
   severity: OverviewSummarySeverity
+  /** When >1, identical rows were collapsed — render as "×N" after the label. */
+  count?: number
 }
 
 export type OverviewRoute = {
@@ -123,19 +125,75 @@ export function sortSummaryBySeverity<T extends { severity: OverviewSummarySever
   return [...items].sort((a, b) => STATUS_ORDER[a.severity] - STATUS_ORDER[b.severity])
 }
 
+/** Normalise summary/alert text for duplicate matching (whitespace + case). */
+export function normaliseSummaryKey(value: string | null | undefined): string {
+  return (value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
 export function buildSummaryItems(evidence: RouteEvidence[] | undefined | null): OverviewSummaryItem[] {
   const items = (evidence || []).map(item => ({
     id: item.id,
     label: (item.title || item.detail || 'Evidence item').trim() || 'Evidence item',
     severity: evidenceToSummarySeverity(item),
   }))
-  return sortSummaryBySeverity(items)
+  return collapseSummaryDuplicates(sortSummaryBySeverity(items))
+}
+
+/**
+ * Collapse identical summary rows (same severity + normalised label) into one row with count.
+ * Order follows first occurrence after severity sort.
+ */
+export function collapseSummaryDuplicates(items: OverviewSummaryItem[]): OverviewSummaryItem[] {
+  const order: string[] = []
+  const byKey = new Map<string, OverviewSummaryItem>()
+  for (const item of items) {
+    if (item.id === 'summary-more') continue
+    const key = `${item.severity}:${normaliseSummaryKey(item.label)}`
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.count = (existing.count || 1) + (item.count || 1)
+      continue
+    }
+    byKey.set(key, { ...item, count: item.count || 1 })
+    order.push(key)
+  }
+  return order.map(key => {
+    const row = byKey.get(key)!
+    return row.count && row.count > 1 ? row : { ...row, count: undefined }
+  })
+}
+
+/**
+ * Collapse alerts that share the same change + detail (normalised) into one row with count
+ * and the newest timestamp kept as the representative.
+ */
+export function collapseDuplicateAlerts(alerts: MonitoringAlert[]): Array<MonitoringAlert & { count: number }> {
+  const order: string[] = []
+  const byKey = new Map<string, MonitoringAlert & { count: number }>()
+  for (const alert of alerts) {
+    const change = normaliseSummaryKey(alert.change)
+    const detail = normaliseSummaryKey(alert.detail)
+    const key = `${change}::${detail}`
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.count += 1
+      const nextTs = Date.parse(alert.runAt || alert.time)
+      const prevTs = Date.parse(existing.runAt || existing.time)
+      if (Number.isFinite(nextTs) && (!Number.isFinite(prevTs) || nextTs > prevTs)) {
+        Object.assign(existing, alert, { count: existing.count })
+      }
+      continue
+    }
+    byKey.set(key, { ...alert, count: 1 })
+    order.push(key)
+  }
+  return order.map(key => byKey.get(key)!)
 }
 
 /**
  * Build expanded-card summary rows from evidence when present, else confirmOnSite
- * (+ linked alerts). Cap at SUMMARY_ITEM_CAP with a "+N more" tail.
- * For HOLD/VERIFY with nothing to itemise, returns `fallback` from the record summary.
+ * (+ linked alerts). Identical labels collapse to "×N"; then cap at SUMMARY_ITEM_CAP
+ * with a "+N more" tail. For HOLD/VERIFY with nothing to itemise, returns `fallback`.
  */
 export function buildRouteSummary(opts: {
   evidence?: RouteEvidence[] | null
@@ -164,7 +222,7 @@ export function buildRouteSummary(opts: {
         severity: confirmSeverity,
       }))
       .filter(item => item.label)
-    items = [...confirmItems]
+    items = collapseSummaryDuplicates(confirmItems)
   }
 
   const alertItems: OverviewSummaryItem[] = alerts.map(alert => ({
@@ -180,16 +238,24 @@ export function buildRouteSummary(opts: {
             : 'READY',
   }))
 
-  // Deduplicate by label+severity so confirm lines and alerts don't double up.
-  const seen = new Set(items.map(i => `${i.severity}:${i.label.toLowerCase()}`))
+  // Merge alert lines into evidence/confirm rows; bump count when labels match.
+  const seen = new Map<string, OverviewSummaryItem>()
+  for (const item of items) {
+    seen.set(`${item.severity}:${normaliseSummaryKey(item.label)}`, item)
+  }
   for (const alertItem of alertItems) {
-    const key = `${alertItem.severity}:${alertItem.label.toLowerCase()}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    items.push(alertItem)
+    const key = `${alertItem.severity}:${normaliseSummaryKey(alertItem.label)}`
+    const existing = seen.get(key)
+    if (existing) {
+      existing.count = (existing.count || 1) + 1
+      continue
+    }
+    const row = { ...alertItem, count: 1 }
+    seen.set(key, row)
+    items.push(row)
   }
 
-  items = sortSummaryBySeverity(items)
+  items = collapseSummaryDuplicates(sortSummaryBySeverity(items))
 
   if (items.length > SUMMARY_ITEM_CAP) {
     const extra = items.length - SUMMARY_ITEM_CAP
@@ -669,26 +735,34 @@ export function applyOverviewFiltersToSearch(
 }
 
 export function groupAlertsByStatus(alerts: MonitoringAlert[]): {
-  HOLD: MonitoringAlert[]
-  VERIFY: MonitoringAlert[]
-  READY: MonitoringAlert[]
+  HOLD: Array<MonitoringAlert & { count: number }>
+  VERIFY: Array<MonitoringAlert & { count: number }>
+  READY: Array<MonitoringAlert & { count: number }>
 } {
-  const groups = { HOLD: [] as MonitoringAlert[], VERIFY: [] as MonitoringAlert[], READY: [] as MonitoringAlert[] }
+  const buckets = {
+    HOLD: [] as MonitoringAlert[],
+    VERIFY: [] as MonitoringAlert[],
+    READY: [] as MonitoringAlert[],
+  }
   const sorted = [...alerts].sort(
     (a, b) => Date.parse(b.runAt || b.time) - Date.parse(a.runAt || a.time),
   )
   for (const alert of sorted) {
     if (alert.status === 'Resolved') {
-      groups.READY.push(alert)
+      buckets.READY.push(alert)
     } else if (alert.severity === 'HOLD') {
-      groups.HOLD.push(alert)
+      buckets.HOLD.push(alert)
     } else if (alert.severity === 'VERIFY') {
-      groups.VERIFY.push(alert)
+      buckets.VERIFY.push(alert)
     } else {
-      groups.READY.push(alert)
+      buckets.READY.push(alert)
     }
   }
-  return groups
+  return {
+    HOLD: collapseDuplicateAlerts(buckets.HOLD),
+    VERIFY: collapseDuplicateAlerts(buckets.VERIFY),
+    READY: collapseDuplicateAlerts(buckets.READY),
+  }
 }
 
 /** True when a route has no inline geometry and no GPX URL to load. */

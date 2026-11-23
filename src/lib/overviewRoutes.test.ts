@@ -10,12 +10,15 @@ import {
   buildOverviewRoutes,
   buildRouteSummary,
   buildSummaryItems,
+  collapseDuplicateAlerts,
+  collapseSummaryDuplicates,
   countByStatus,
   countRoutesWithoutGeometry,
   filterOverviewRoutes,
   filtersAreActive,
   groupAlertsByStatus,
   looksLikeCoordinates,
+  normaliseSummaryKey,
   overviewRouteIdForResult,
   parseOverviewFilters,
   routeDisplayTitle,
@@ -339,14 +342,136 @@ test('alertsForRoute matches check ids, job id, and routeLabel', () => {
 
 test('groupAlertsByStatus puts Resolved into READY and sorts newest first', () => {
   const groups = groupAlertsByStatus([
-    alert({ id: 'old', routeId: 'r', severity: 'HOLD', runAt: '2026-11-20T10:00:00+01:00', time: '2026-11-20T10:00:00+01:00' }),
-    alert({ id: 'new', routeId: 'r', severity: 'HOLD', runAt: '2026-11-22T10:00:00+01:00', time: '2026-11-22T10:00:00+01:00' }),
+    alert({
+      id: 'old',
+      routeId: 'r',
+      severity: 'HOLD',
+      change: 'Old closure',
+      detail: 'A7 north',
+      runAt: '2026-11-20T10:00:00+01:00',
+      time: '2026-11-20T10:00:00+01:00',
+    }),
+    alert({
+      id: 'new',
+      routeId: 'r',
+      severity: 'HOLD',
+      change: 'New closure',
+      detail: 'A7 south',
+      runAt: '2026-11-22T10:00:00+01:00',
+      time: '2026-11-22T10:00:00+01:00',
+    }),
     alert({ id: 'done', routeId: 'r', severity: 'HOLD', status: 'Resolved', runAt: '2026-11-21T10:00:00+01:00', time: '2026-11-21T10:00:00+01:00' }),
     alert({ id: 'v', routeId: 'r', severity: 'VERIFY', runAt: '2026-11-21T12:00:00+01:00', time: '2026-11-21T12:00:00+01:00' }),
   ])
   assert.deepEqual(groups.HOLD.map(a => a.id), ['new', 'old'])
   assert.deepEqual(groups.VERIFY.map(a => a.id), ['v'])
   assert.deepEqual(groups.READY.map(a => a.id), ['done'])
+})
+
+test('normaliseSummaryKey collapses whitespace and case', () => {
+  assert.equal(normaliseSummaryKey('  Weight   Limit 3.5 T  '), 'weight limit 3.5 t')
+})
+
+test('collapseSummaryDuplicates merges identical labels and keeps ×N', () => {
+  const collapsed = collapseSummaryDuplicates([
+    { id: '1', label: 'Weight limit 3.5 t vs vehicle 60 t', severity: 'HOLD' },
+    { id: '2', label: 'Weight  Limit 3.5 T vs vehicle 60 t', severity: 'HOLD' },
+    { id: '3', label: 'Weight limit 3.5 t vs vehicle 60 t', severity: 'HOLD' },
+    { id: '4', label: 'Lane narrows', severity: 'VERIFY' },
+  ])
+  assert.equal(collapsed.length, 2)
+  assert.equal(collapsed[0].count, 3)
+  assert.equal(collapsed[0].severity, 'HOLD')
+  assert.equal(collapsed[1].label, 'Lane narrows')
+  assert.equal(collapsed[1].count, undefined)
+})
+
+test('buildRouteSummary collapses duplicate labels before the +N more cap', () => {
+  const summary = buildRouteSummary({
+    evidence: Array.from({ length: 5 }, (_, i) =>
+      evidence({
+        id: `e${i}`,
+        state: 'danger',
+        title: 'Weight limit 3.5 t vs vehicle 60 t',
+      }),
+    ),
+    verdict: 'HOLD',
+  })
+  assert.equal(summary.items.length, 1)
+  assert.equal(summary.items[0].count, 5)
+  assert.match(summary.items[0].label, /Weight limit/i)
+})
+
+test('collapseDuplicateAlerts keeps newest timestamp and ×N', () => {
+  const collapsed = collapseDuplicateAlerts([
+    alert({
+      id: 'a1',
+      routeId: 'r',
+      severity: 'HOLD',
+      change: 'Weight limit',
+      detail: '3.5 t vs 60 t',
+      runAt: '2026-11-20T10:00:00+01:00',
+      time: '2026-11-20T10:00:00+01:00',
+    }),
+    alert({
+      id: 'a2',
+      routeId: 'r',
+      severity: 'HOLD',
+      change: 'Weight  limit',
+      detail: '3.5 t vs 60 t',
+      runAt: '2026-11-22T10:00:00+01:00',
+      time: '2026-11-22T10:00:00+01:00',
+    }),
+    alert({
+      id: 'a3',
+      routeId: 'r',
+      severity: 'HOLD',
+      change: 'Weight limit',
+      detail: '3.5 t vs 60 t',
+      runAt: '2026-11-21T10:00:00+01:00',
+      time: '2026-11-21T10:00:00+01:00',
+    }),
+    alert({
+      id: 'b1',
+      routeId: 'r',
+      severity: 'HOLD',
+      change: 'Full closure',
+      detail: 'A7',
+      runAt: '2026-11-21T09:00:00+01:00',
+      time: '2026-11-21T09:00:00+01:00',
+    }),
+  ])
+  assert.equal(collapsed.length, 2)
+  assert.equal(collapsed[0].count, 3)
+  assert.equal(collapsed[0].id, 'a2')
+  assert.equal(collapsed[1].id, 'b1')
+  assert.equal(collapsed[1].count, 1)
+})
+
+test('groupAlertsByStatus collapses identical change+detail rows', () => {
+  const groups = groupAlertsByStatus([
+    alert({
+      id: '1',
+      routeId: 'r',
+      severity: 'VERIFY',
+      change: 'Lane narrows',
+      detail: 'Right lane',
+      runAt: '2026-11-20T10:00:00+01:00',
+      time: '2026-11-20T10:00:00+01:00',
+    }),
+    alert({
+      id: '2',
+      routeId: 'r',
+      severity: 'VERIFY',
+      change: 'Lane narrows',
+      detail: 'Right lane',
+      runAt: '2026-11-22T10:00:00+01:00',
+      time: '2026-11-22T10:00:00+01:00',
+    }),
+  ])
+  assert.equal(groups.VERIFY.length, 1)
+  assert.equal(groups.VERIFY[0].count, 2)
+  assert.equal(groups.VERIFY[0].id, '2')
 })
 
 test('routeDisplayTitle falls back when ends look like coordinates', () => {

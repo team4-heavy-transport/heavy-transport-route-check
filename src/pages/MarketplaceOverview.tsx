@@ -111,7 +111,7 @@ function SummaryList({
 }) {
   if (items.length) {
     return (
-      <ul className="overview-summary-list">
+      <ul className="overview-summary-list" data-testid="overview-summary-list">
         {items.map(item => (
           <li key={item.id} className={`is-${item.severity.toLowerCase()}`}>
             <span className="overview-summary-dot" aria-hidden />
@@ -122,6 +122,9 @@ function SummaryList({
                 </span>
               ) : null}
               {item.label}
+              {item.count && item.count > 1 ? (
+                <span className="overview-summary-count"> ×{item.count}</span>
+              ) : null}
             </span>
           </li>
         ))}
@@ -319,22 +322,36 @@ function AlertGroups({ alerts }: { alerts: OverviewRoute['alerts'] }) {
       {(['HOLD', 'VERIFY', 'READY'] as const).map(sev => {
         const list = groups[sev]
         if (!list.length) return null
+        const totalCount = list.reduce((sum, item) => sum + (item.count || 1), 0)
         return (
-          <section key={sev} className={`overview-alert-group is-${sev.toLowerCase()}`}>
+          <section
+            key={sev}
+            className={`overview-alert-group is-${sev.toLowerCase()}`}
+            data-testid={`overview-alert-group-${sev.toLowerCase()}`}
+          >
             <h3>
-              {sev === 'HOLD' ? 'Hold' : sev === 'VERIFY' ? 'Verify' : 'Ready / resolved'}
-              <span>{list.length}</span>
+              <span className="overview-alert-heading">
+                <span className="overview-alert-heading-dot" aria-hidden />
+                {sev === 'HOLD' ? 'Hold' : sev === 'VERIFY' ? 'Verify' : 'Ready / resolved'}
+              </span>
+              <span className="overview-alert-count-pill">{totalCount}</span>
             </h3>
             <ul>
               {list.map(item => (
-                <li key={item.id}>
+                <li key={item.id} data-testid="overview-alert-row">
                   <span className="overview-alert-change">{item.change || item.detail}</span>
                   {item.detail && item.change && item.detail !== item.change ? (
                     <span className="overview-alert-detail">{item.detail}</span>
                   ) : null}
-                  <time dateTime={item.runAt || item.time}>
-                    {formatBerlinDateTime(item.runAt || item.time)}
-                  </time>
+                  {item.count > 1 ? (
+                    <span className="overview-alert-dup" data-testid="overview-alert-dup">
+                      ×{item.count} · latest {formatBerlinDateTime(item.runAt || item.time)}
+                    </span>
+                  ) : (
+                    <time dateTime={item.runAt || item.time}>
+                      {formatBerlinDateTime(item.runAt || item.time)}
+                    </time>
+                  )}
                 </li>
               ))}
             </ul>
@@ -456,45 +473,6 @@ function FullSizeMapDialog({
     >
       <div className="overview-fullmap-header">
         <h2 id={titleId}>Full-size map</h2>
-        <div className="overview-fullmap-modes" role="tablist" aria-label="Map mode" data-tour="overview-fullmap-modes">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'all'}
-            className={mode === 'all' ? 'is-active' : ''}
-            onClick={() => onModeChange('all')}
-          >
-            All routes
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'single'}
-            className={mode === 'single' ? 'is-active' : ''}
-            onClick={() => onModeChange('single')}
-            disabled={!selected}
-          >
-            Single route
-          </button>
-        </div>
-        <div className="overview-fullmap-mobile-toggle" role="group" aria-label="Map or list">
-          <button
-            type="button"
-            className={mobilePane === 'map' ? 'is-active' : ''}
-            aria-pressed={mobilePane === 'map'}
-            onClick={() => setMobilePane('map')}
-          >
-            Map
-          </button>
-          <button
-            type="button"
-            className={mobilePane === 'list' ? 'is-active' : ''}
-            aria-pressed={mobilePane === 'list'}
-            onClick={() => setMobilePane('list')}
-          >
-            List
-          </button>
-        </div>
         <button
           type="button"
           className="market-button secondary overview-fullmap-minimise"
@@ -503,11 +481,56 @@ function FullSizeMapDialog({
         >
           <Minimize2 size={16} aria-hidden /> Minimise
         </button>
+        <div className="overview-fullmap-controls">
+          <div className="overview-fullmap-modes" role="tablist" aria-label="Map mode" data-tour="overview-fullmap-modes">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'all'}
+              className={mode === 'all' ? 'is-active' : ''}
+              onClick={() => onModeChange('all')}
+            >
+              All routes
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === 'single'}
+              className={mode === 'single' ? 'is-active' : ''}
+              onClick={() => onModeChange('single')}
+              disabled={!selected}
+            >
+              Single route
+            </button>
+          </div>
+          <div className="overview-fullmap-mobile-toggle" role="group" aria-label="Map or list">
+            <button
+              type="button"
+              className={mobilePane === 'map' ? 'is-active' : ''}
+              aria-pressed={mobilePane === 'map'}
+              onClick={() => setMobilePane('map')}
+            >
+              Map
+            </button>
+            <button
+              type="button"
+              className={mobilePane === 'list' ? 'is-active' : ''}
+              aria-pressed={mobilePane === 'list'}
+              onClick={() => setMobilePane('list')}
+            >
+              List
+            </button>
+          </div>
+        </div>
       </div>
 
       {mode === 'all' ? (
         <div className="overview-fullmap-all">
-          <div className="overview-fullmap-cards" data-tour="overview-fullmap-cards">
+          <div
+            className="overview-fullmap-cards"
+            data-tour="overview-fullmap-cards"
+            aria-label="Routes, swipe for more"
+          >
             {routes.map(route => {
               const statusCls = statusClassName(route.status)
               const selected = route.id === selectedId
@@ -565,7 +588,12 @@ function FullSizeMapDialog({
                 ))}
               </select>
             </label>
-            <button type="button" className="btn-text" onClick={() => onModeChange('all')}>
+            <button
+              type="button"
+              className="btn-text overview-fullmap-back"
+              data-testid="overview-fullmap-back"
+              onClick={() => onModeChange('all')}
+            >
               Back to all routes
             </button>
             {selected.vehicle ? (
@@ -849,31 +877,33 @@ export default function MarketplaceOverview() {
             <span className="market-eyebrow">Route block</span>
             <h2>Routes on the map</h2>
           </div>
-          <div className="overview-route-block-actions">
-            <button
-              type="button"
-              className="market-button secondary"
-              data-tour="overview-show-all"
-              onClick={toggleAll}
-              disabled={!filteredRoutes.length}
-            >
-              {allExpanded ? 'Hide all' : 'Show all'}
-            </button>
-            <button
-              ref={fullMapButtonRef}
-              type="button"
-              className="market-button secondary"
-              data-tour="overview-fullmap-open"
-              onClick={() => openFullMap(selectedId ? fullMapMode : 'all')}
-              disabled={!filteredRoutes.length}
-            >
-              <Expand size={16} aria-hidden /> Full-size map
-            </button>
-          </div>
+          {filteredRoutes.length > 0 ? (
+            <div className="overview-route-block-actions">
+              <button
+                type="button"
+                className="market-button secondary"
+                data-tour="overview-show-all"
+                onClick={toggleAll}
+              >
+                {allExpanded ? 'Hide all' : 'Show all'}
+              </button>
+              <button
+                ref={fullMapButtonRef}
+                type="button"
+                className="market-button secondary"
+                data-tour="overview-fullmap-open"
+                onClick={() => openFullMap(selectedId ? fullMapMode : 'all')}
+              >
+                <Expand size={16} aria-hidden /> Full-size map
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {filteredRoutes.length === 0 ? (
-          emptyFilterMessage
+          <p className="overview-route-block-empty" data-testid="overview-route-block-empty">
+            No routes to show on the map
+          </p>
         ) : (
           <div className="overview-route-block-grid">
             {/* Map above cards on phones so geography leads; cards then refine selection. */}

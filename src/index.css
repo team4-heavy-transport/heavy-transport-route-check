@@ -108,6 +108,9 @@
   --status-hold-bg: #ffefee;
   --status-hold-border: #ff3b30;
   --selection-ring: color-mix(in srgb, var(--text-primary) 60%, transparent);
+  /* Active filter / segmented chip text on soft fill — AA ≥4.5:1 (not --accent @ 4.36) */
+  --chip-active-fg: #0058b0;
+  --chip-active-bg: #e8f1fc;
   --blue-bg: var(--accent-light);
   --blue-text: #0058b0;
   /* Ink on saturated READY/HOLD/VERIFY pill fills (11px bold needs ≥4.5:1) */
@@ -211,6 +214,8 @@
     --status-hold-bg: #3b1210;
     --status-hold-border: #ff453a;
     --selection-ring: color-mix(in srgb, var(--text-primary) 60%, transparent);
+    --chip-active-fg: #64d2ff;
+    --chip-active-bg: #0c2a4a;
     --blue-bg: #0c2a4a;
     --blue-text: #64d2ff;
     --verdict-pill-ink: #1c1c1e;
@@ -343,7 +348,13 @@ button, a, input, select, textarea {
 .permit-leaflet-host .heatmap-shell, .permit-leaflet-shell { height: 100%; }
 .permit-leaflet-map { position: absolute; z-index: 0; inset: 0; background: #e8eef2; }
 .permit-leaflet-map.leaflet-container .leaflet-tile-pane { display: block !important; filter: grayscale(1) brightness(1.06) contrast(0.92); }
-.permit-leaflet-map .leaflet-control-attribution { background: var(--bg-glass); }
+.permit-leaflet-map .leaflet-control-attribution {
+  background: var(--bg-glass);
+  color: var(--text-secondary);
+}
+.permit-leaflet-map .leaflet-control-attribution a {
+  color: var(--blue-text);
+}
 .permit-pill-host { background: none !important; border: none !important; width: 0 !important; height: 0 !important; }
 .permit-pill-host .permit-map-pill { position: absolute; top: 50%; transform: translateY(-50%); }
 .permit-pill-host.is-right .permit-map-pill { left: 10px; }
@@ -982,7 +993,13 @@ button, a, input, select, textarea {
   border-radius: var(--r-sm) !important;
   background: var(--bg-fill) !important;
 }
-.topbar-search:focus-within { border-color: transparent !important; background: var(--bg-card) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.topbar-search:focus-within {
+  border-color: transparent !important;
+  background: var(--bg-card) !important;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
 .app-page-host { background: var(--bg-base); }
 .app-page {
   width: 100%;
@@ -3961,20 +3978,24 @@ select:focus-visible {
   border-top: 1px solid var(--sidebar-divider);
   padding: 8px 10px 12px;
 }
-.app-sidebar a:focus,
-.app-sidebar a:focus-visible,
-.app-sidebar button:focus,
-.app-sidebar button:focus-visible {
+.app-sidebar a:focus:not(:focus-visible),
+.app-sidebar button:focus:not(:focus-visible),
+.app-sidebar input:focus:not(:focus-visible) {
   outline: none;
-  outline-offset: 0;
 }
+.app-sidebar a:focus-visible,
+.app-sidebar button:focus-visible,
+.app-sidebar input:focus-visible,
+.app-sidebar .sidebar-link:focus-visible,
 .app-sidebar .sidebar-link:focus-visible .sidebar-link-row,
 .sidebar-collapse:focus-visible,
 .sidebar-logo:focus-visible,
 .sidebar-wordmark:focus-visible,
-.sidebar-htr:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--accent);
+.sidebar-htr:focus-visible,
+.user-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
@@ -5293,9 +5314,18 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
     background: var(--bg-glass-strong) !important;
     border-color: var(--border);
   }
-  .permit-leaflet-map .leaflet-control-attribution {
-    background: var(--bg-glass) !important;
-    color: var(--text-secondary);
+  .permit-leaflet-map .leaflet-control-attribution,
+  .overview-route-block-map .leaflet-control-attribution,
+  .overview-fullmap .leaflet-control-attribution,
+  [data-overview-map] .leaflet-control-attribution {
+    background: var(--bg-elevated) !important;
+    color: var(--text-secondary) !important;
+  }
+  .permit-leaflet-map .leaflet-control-attribution a,
+  .overview-route-block-map .leaflet-control-attribution a,
+  .overview-fullmap .leaflet-control-attribution a,
+  [data-overview-map] .leaflet-control-attribution a {
+    color: var(--blue-text) !important;
   }
   .route-page-polished {
     background: var(--bg-base) !important;
@@ -6173,7 +6203,7 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
 }
 
 .user-chip-switch:focus-visible {
-  outline: 2px solid var(--blue-text);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -6324,8 +6354,12 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
 }
 .overview-filter-chips button.is-active {
   border-color: var(--accent-button);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--chip-active-bg);
+  color: var(--chip-active-fg);
+}
+.overview-filter-chips button.is-active .overview-filter-count {
+  color: var(--chip-active-fg);
+  opacity: 0.78;
 }
 .overview-filter-count {
   margin-left: 6px;
@@ -6436,6 +6470,13 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
   border-radius: var(--r-lg);
   background: var(--bg-card);
   color: var(--text-secondary);
+}
+.overview-route-block-empty {
+  margin: 0;
+  padding: 8px 0 4px;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .overview-route-block-header {
@@ -6657,6 +6698,12 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
   font-size: 20px;
   font-weight: 700;
 }
+.overview-fullmap-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
 .overview-fullmap-modes,
 .overview-fullmap-mobile-toggle {
   display: inline-flex;
@@ -6677,10 +6724,21 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
 }
 .overview-fullmap-modes button.is-active,
 .overview-fullmap-mobile-toggle button.is-active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--chip-active-bg);
+  color: var(--chip-active-fg);
 }
-.overview-fullmap-minimise { margin-left: auto; }
+.overview-fullmap-minimise {
+  margin-left: auto;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.overview-fullmap-back {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
 .overview-fullmap-all,
 .overview-fullmap-single {
   flex: 1;
@@ -6792,11 +6850,50 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
   justify-content: space-between;
   gap: 8px;
   margin: 0;
-  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.overview-alert-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.overview-alert-heading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+.overview-alert-group.is-hold h3,
+.overview-alert-group.is-hold .overview-alert-heading { color: var(--status-hold-fg); }
+.overview-alert-group.is-verify h3,
+.overview-alert-group.is-verify .overview-alert-heading { color: var(--status-verify-fg); }
+.overview-alert-group.is-ready h3,
+.overview-alert-group.is-ready .overview-alert-heading { color: var(--status-ready-fg); }
+.overview-alert-count-pill {
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-fill);
+  color: var(--text-secondary);
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  text-align: center;
+}
+.overview-alert-group.is-hold .overview-alert-count-pill {
+  background: var(--status-hold-bg);
+  color: var(--status-hold-fg);
+}
+.overview-alert-group.is-verify .overview-alert-count-pill {
+  background: var(--status-verify-bg);
+  color: var(--status-verify-fg);
+}
+.overview-alert-group.is-ready .overview-alert-count-pill {
+  background: var(--status-ready-bg);
+  color: var(--status-ready-fg);
 }
 .overview-fullmap-alerts section { margin-top: 12px; }
 .overview-fullmap-alerts ul {
@@ -6815,7 +6912,13 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
 }
 .overview-alert-change { color: var(--text-primary); font-weight: 650; }
 .overview-alert-detail { color: var(--text-secondary); font-size: 13px; }
+.overview-alert-dup,
 .overview-fullmap-alerts time { color: var(--text-tertiary); font-size: 12px; }
+.overview-summary-count {
+  color: var(--text-tertiary);
+  font-weight: 650;
+  white-space: nowrap;
+}
 .overview-alerts-empty-groups {
   margin: 10px 0 0;
   color: var(--text-tertiary);
@@ -6850,7 +6953,6 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
     inset: 0;
     padding: 8px 10px calc(8px + var(--safe-area-inset-bottom, 0px));
   }
-  .overview-fullmap-mobile-toggle { display: inline-flex; }
   .overview-fullmap-all,
   .overview-fullmap-single {
     grid-template-columns: 1fr;
@@ -6880,15 +6982,40 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
     order: 2;
     max-height: 28vh;
   }
+  .overview-fullmap-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title minimise"
+      "controls controls";
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 8px;
+  }
+  .overview-fullmap-header h2 { grid-area: title; min-width: 0; }
+  .overview-fullmap-minimise {
+    grid-area: minimise;
+    margin-left: 0;
+  }
+  .overview-fullmap-controls {
+    grid-area: controls;
+    flex-wrap: nowrap;
+    width: 100%;
+    min-width: 0;
+  }
+  .overview-fullmap-mobile-toggle { display: inline-flex; }
   .overview-fullmap-cards {
     flex-direction: row;
     overflow-x: auto;
     overflow-y: hidden;
     gap: 10px;
     padding-bottom: 4px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
   }
   .overview-fullmap-card {
     flex: 0 0 min(280px, 78vw);
+    scroll-snap-align: start;
   }
   .overview-fullmap-all .heatmap-shell,
   .overview-fullmap-single .heatmap-shell,
@@ -6911,9 +7038,11 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
 /* Verdict banner: wrap side CTA/meta before the title column collapses */
 .verdict-banner {
   flex-wrap: wrap;
+  align-content: flex-start;
 }
 .verdict-content {
-  flex: 1 1 240px;
+  /* Use auto basis so column layout (≤600px) does not reserve ~240px height. */
+  flex: 1 1 auto;
   min-width: min(240px, 100%);
 }
 .verdict-banner .verdict-cta,
@@ -6925,7 +7054,7 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
   gap: 8px;
 }
 .verdict-recheck {
-  flex: 1 1 180px;
+  flex: 0 1 auto;
   min-width: min(180px, 100%);
 }
 /* 601–1100px: icon stays beside content so the title column can grow (fixes 1024). */
@@ -6952,17 +7081,29 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
   }
   .verdict-checked-meta { max-width: none; text-align: left; }
 }
-/* ≤600px: stacked / centred layout from main (icon above content). */
+/* ≤600px: stacked / centred — height hugs content (no flex-basis / grid row stretch). */
 @media (max-width: 600px) {
   .verdict-banner {
     display: flex;
     flex-direction: column;
     align-items: center;
+    align-content: flex-start;
     text-align: center;
     padding: 20px 16px;
+    min-height: 0;
+    height: auto;
   }
-  .verdict-icon { margin-bottom: 4px; }
-  .verdict-content { width: 100%; min-width: 0; }
+  .verdict-icon {
+    flex: 0 0 auto;
+    margin-bottom: 4px;
+  }
+  .verdict-content,
+  .verdict-recheck {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
   .verdict-banner > .btn-primary,
   .verdict-banner > .verdict-cta,
   .verdict-recheck {
@@ -6974,6 +7115,7 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
     align-items: center;
     justify-content: center;
     gap: 8px;
+    flex: 0 0 auto;
   }
   .verdict-checked-meta { max-width: none; text-align: center; }
 }

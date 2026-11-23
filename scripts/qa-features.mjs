@@ -790,6 +790,80 @@ async function main() {
     JSON.stringify(statusColourAudit.selectionBorder),
   )
 
+  // Round-4: active chip contrast + empty-filter copy + full-map phone chrome
+  const chipContrast = await page.evaluate(() => {
+    const parseRgb = (value) => {
+      const m = String(value || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i)
+      if (!m) return null
+      return [Number(m[1]), Number(m[2]), Number(m[3])]
+    }
+    const luminance = ([r, g, b]) => {
+      const toLin = (c) => {
+        const s = c / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      }
+      return 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b)
+    }
+    const ratio = (fg, bg) => {
+      if (!fg || !bg) return 0
+      const L1 = luminance(fg)
+      const L2 = luminance(bg)
+      return (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05)
+    }
+    const allChip = document.querySelector('[data-tour="overview-filters"] button.is-active')
+    if (!allChip) return null
+    const style = getComputedStyle(allChip)
+    return {
+      color: style.color,
+      background: style.backgroundColor,
+      ratio: ratio(parseRgb(style.color), parseRgb(style.backgroundColor)),
+    }
+  })
+  record(
+    'Active Overview filter chip text contrast ≥ 4.5:1',
+    Boolean(chipContrast && chipContrast.ratio >= 4.5),
+    JSON.stringify(chipContrast),
+  )
+
+  await page.goto(base + '/?status=ready&checked=24h', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
+  const skipEmpty = page.getByRole('button', { name: /skip/i })
+  if (await skipEmpty.count()) await skipEmpty.first().click().catch(() => {})
+  await page.locator('[data-tour="overview-filters"]').waitFor({ timeout: 15000 })
+  await page.waitForTimeout(300)
+  const emptyAudit = await page.evaluate(() => {
+    const listEmpty = document.querySelectorAll('[data-testid="overview-empty-filter"]').length
+    const blockEmpty = document.querySelectorAll('[data-testid="overview-route-block-empty"]').length
+    const clearButtons = Array.from(document.querySelectorAll('button')).filter((btn) =>
+      /^clear filters$/i.test((btn.textContent || '').trim()),
+    ).length
+    const showAll = document.querySelector('[data-tour="overview-show-all"]')
+    const fullMap = document.querySelector('[data-tour="overview-fullmap-open"]')
+    return {
+      listEmpty,
+      blockEmpty,
+      clearButtons,
+      blockText: document.querySelector('[data-testid="overview-route-block-empty"]')?.textContent?.trim() || '',
+      showAllHidden: !showAll,
+      fullMapHidden: !fullMap,
+    }
+  })
+  record(
+    'Empty filters show one list message and muted map line (no duplicate Clear filters in route block)',
+    emptyAudit.listEmpty === 1
+      && emptyAudit.blockEmpty === 1
+      && emptyAudit.clearButtons === 2 // filter-bar link + list button only
+      && /no routes to show on the map/i.test(emptyAudit.blockText)
+      && emptyAudit.showAllHidden
+      && emptyAudit.fullMapHidden,
+    JSON.stringify(emptyAudit),
+  )
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await ensureLoggedIn('Demo')
+  const skipAfterEmpty = page.getByRole('button', { name: /skip/i })
+  if (await skipAfterEmpty.count()) await skipAfterEmpty.first().click().catch(() => {})
+  await page.locator('[data-tour="overview-filters"]').waitFor({ timeout: 15000 })
+
   for (const [width, height] of [[375, 667], [390, 844]]) {
     await page.setViewportSize({ width, height })
     await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
@@ -839,6 +913,103 @@ async function main() {
         listCount > 0 && listCount === blockCount,
         `list=${listCount} block=${blockCount}`,
       )
+    }
+
+    // Round-4: full-size map phone header is 2 rows (title+Minimise; segmented controls)
+    const fullOpenMobile = page.locator('[data-tour="overview-fullmap-open"]')
+    if (await fullOpenMobile.count()) {
+      await fullOpenMobile.click()
+      await page.locator('[data-testid="overview-fullmap"]').waitFor({ timeout: 10000 })
+      const headerLayout = await page.evaluate(() => {
+        const header = document.querySelector('.overview-fullmap-header')
+        const title = header?.querySelector('h2')
+        const minimise = header?.querySelector('[data-tour="overview-fullmap-minimise"]')
+        const controls = header?.querySelector('.overview-fullmap-controls')
+        if (!header || !title || !minimise || !controls) return null
+        const hr = header.getBoundingClientRect()
+        const tr = title.getBoundingClientRect()
+        const mr = minimise.getBoundingClientRect()
+        const cr = controls.getBoundingClientRect()
+        const modes = controls.querySelector('.overview-fullmap-modes')
+        const toggle = controls.querySelector('.overview-fullmap-mobile-toggle')
+        const modesBox = modes?.getBoundingClientRect()
+        const toggleBox = toggle?.getBoundingClientRect()
+        return {
+          headerHeight: hr.height,
+          titleTop: tr.top,
+          minimiseTop: mr.top,
+          minimiseHeight: mr.height,
+          sameTitleRow: Math.abs(tr.top - mr.top) < 12,
+          controlsBelowTitle: cr.top >= tr.bottom - 2,
+          modesToggleSameRow: Boolean(
+            modesBox && toggleBox && Math.abs(modesBox.top - toggleBox.top) < 12,
+          ),
+          cardsAria: document.querySelector('[data-tour="overview-fullmap-cards"]')?.getAttribute('aria-label') || '',
+          pageOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        }
+      })
+      record(
+        `Full-size map phone header is two rows at ${width}×${height}`,
+        Boolean(
+          headerLayout
+          && headerLayout.sameTitleRow
+          && headerLayout.controlsBelowTitle
+          && headerLayout.modesToggleSameRow
+          && headerLayout.minimiseHeight >= 44
+          && headerLayout.headerHeight <= 110,
+        ),
+        JSON.stringify(headerLayout),
+      )
+      record(
+        `Full-size map cards scroller labelled for swipe at ${width}×${height}`,
+        Boolean(headerLayout && /Routes, swipe for more/i.test(headerLayout.cardsAria) && !headerLayout.pageOverflow),
+        JSON.stringify(headerLayout),
+      )
+
+      await page.getByRole('tab', { name: 'Single route' }).click()
+      const backBtn = page.getByTestId('overview-fullmap-back')
+      await backBtn.waitFor({ timeout: 5000 })
+      const backBox = await backBtn.boundingBox()
+      record(
+        `Back to all routes is ≥44px tall at ${width}×${height}`,
+        Boolean(backBox && backBox.height >= 44),
+        JSON.stringify(backBox),
+      )
+
+      const alertDedupe = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll('[data-testid="overview-alert-row"]'))
+        const keys = rows.map((row) => {
+          const change = (row.querySelector('.overview-alert-change')?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()
+          const detail = (row.querySelector('.overview-alert-detail')?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()
+          return `${change}::${detail}`
+        })
+        const unique = new Set(keys)
+        const dups = document.querySelectorAll('[data-testid="overview-alert-dup"]').length
+        const headings = Array.from(document.querySelectorAll('.overview-alert-group h3')).map((h3) => {
+          const style = getComputedStyle(h3)
+          return {
+            text: (h3.textContent || '').replace(/\s+/g, ' ').trim(),
+            fontSize: style.fontSize,
+            color: style.color,
+          }
+        })
+        return { rowCount: rows.length, unique: unique.size, dups, headings }
+      })
+      if (alertDedupe.rowCount > 0) {
+        record(
+          `Single-route alerts dedupe identical rows at ${width}×${height}`,
+          alertDedupe.unique === alertDedupe.rowCount,
+          JSON.stringify(alertDedupe),
+        )
+      } else {
+        record(
+          `Single-route alerts panel renders at ${width}×${height}`,
+          (await page.locator('[data-testid="overview-fullmap-alerts"]').count()) > 0,
+        )
+      }
+
+      await page.locator('[data-tour="overview-fullmap-minimise"]').click()
+      await page.locator('[data-testid="overview-fullmap"]').waitFor({ state: 'detached', timeout: 10000 })
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -2034,6 +2205,44 @@ async function main() {
       && /route=/.test(page.url()),
     page.url(),
   )
+  // Round-4: after a live check, single-route alerts collapse identical change+detail rows
+  const singleTab = page.getByRole('tab', { name: 'Single route' })
+  if (await singleTab.count()) {
+    await singleTab.click()
+    await page.locator('[data-testid="overview-fullmap-alerts"]').waitFor({ timeout: 10000 }).catch(() => {})
+    const alertDedupeAfterCheck = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll('[data-testid="overview-alert-row"]'))
+      const keys = rows.map((row) => {
+        const change = (row.querySelector('.overview-alert-change')?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()
+        const detail = (row.querySelector('.overview-alert-detail')?.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()
+        return `${change}::${detail}`
+      })
+      return {
+        rowCount: rows.length,
+        unique: new Set(keys).size,
+        headingColour: (() => {
+          const h3 = document.querySelector('.overview-alert-group h3')
+          if (!h3) return null
+          const style = getComputedStyle(h3)
+          return { fontSize: style.fontSize, color: style.color }
+        })(),
+      }
+    })
+    record(
+      'Single-route alerts dedupe identical change+detail rows after check',
+      alertDedupeAfterCheck.rowCount === 0
+        || alertDedupeAfterCheck.unique === alertDedupeAfterCheck.rowCount,
+      JSON.stringify(alertDedupeAfterCheck),
+    )
+    if (alertDedupeAfterCheck.headingColour) {
+      const px = Number.parseFloat(alertDedupeAfterCheck.headingColour.fontSize)
+      record(
+        'Single-route alert group heading uses 13px status colour',
+        px >= 12.5 && px <= 14,
+        JSON.stringify(alertDedupeAfterCheck.headingColour),
+      )
+    }
+  }
   // Resume on the result via deep-link so later assertions stay on a finished check.
   await page.goto(base + '/route-checks?permit=hamburg-hannover&run=1', {
     waitUntil: 'domcontentloaded',
@@ -2046,6 +2255,35 @@ async function main() {
     simulateTriggerCount === 0,
     `count=${simulateTriggerCount}`,
   )
+  // Round-4: ≤600px verdict banner hugs content (no ~150px dead space / ~606px tall shell)
+  for (const [width, height] of [[375, 667], [390, 844]]) {
+    await page.setViewportSize({ width, height })
+    await page.locator('.verdict-banner').waitFor({ timeout: 15000 })
+    const bannerMetrics = await page.evaluate(() => {
+      const banner = document.querySelector('.verdict-banner')
+      if (!banner) return null
+      const rect = banner.getBoundingClientRect()
+      const last = banner.querySelector('.verdict-recheck') || banner.lastElementChild
+      const lastRect = last?.getBoundingClientRect()
+      const style = getComputedStyle(banner)
+      return {
+        height: rect.height,
+        paddingBottom: Number.parseFloat(style.paddingBottom) || 0,
+        bottomGap: lastRect ? rect.bottom - lastRect.bottom : null,
+      }
+    })
+    record(
+      `Verdict banner hugs content at ${width}×${height} (≤460px, ≤32px trailing gap)`,
+      Boolean(
+        bannerMetrics
+        && bannerMetrics.height > 0
+        && bannerMetrics.height <= 460
+        && bannerMetrics.bottomGap != null
+        && bannerMetrics.bottomGap <= 32,
+      ),
+      JSON.stringify(bannerMetrics),
+    )
+  }
   await page.setViewportSize({ width: 390, height: 915 })
   const ctaBox = await page.locator('.mobile-route-actions .btn-primary').boundingBox()
   const noOverlap = simulateTriggerCount === 0 && Boolean(ctaBox)

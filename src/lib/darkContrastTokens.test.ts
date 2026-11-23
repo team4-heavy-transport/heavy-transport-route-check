@@ -270,6 +270,32 @@ test('Switch user chip link meets WCAG AA on --bg-fill in light and dark', () =>
   }
 })
 
+test('active chip / segmented control tokens meet WCAG AA (≥4.5:1) in light and dark', () => {
+  const css = readFileSync(new URL('../index.css', import.meta.url), 'utf8')
+
+  for (const [label, tokens] of [
+    ['light', lightModeTokens(css)] as const,
+    ['dark', darkModeTokens(css)] as const,
+  ]) {
+    const fg = resolve(tokens, '--chip-active-fg')
+    const bg = resolve(tokens, '--chip-active-bg')
+    assert.ok(
+      contrastRatio(fg, bg) >= 4.5,
+      `${label} chip active ${fg} on ${bg} contrast ${contrastRatio(fg, bg).toFixed(2)} < 4.5`,
+    )
+  }
+
+  // CSS must wire active chips/segmented controls to the AA tokens (not --accent).
+  assert.match(
+    css,
+    /\.overview-filter-chips button\.is-active\s*\{[^}]*color:\s*var\(--chip-active-fg\)/s,
+  )
+  assert.match(
+    css,
+    /\.overview-fullmap-modes button\.is-active[\s\S]*?color:\s*var\(--chip-active-fg\)/s,
+  )
+})
+
 /** Light page wash behind polished verdict banners (prod measured). */
 const lightPageBg = '#f2f2f7'
 const lightIconChip = '#ffffff'
