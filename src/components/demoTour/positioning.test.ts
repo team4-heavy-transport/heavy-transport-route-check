@@ -196,6 +196,43 @@ test('pickFirstVisibleAnchor skips inert/off-screen Switch user for the header c
   assert.equal(rectIntersectsViewport(headerChip.rect, mobile), true)
 })
 
+test('pickFirstVisibleAnchor returns an off-screen-but-rendered element when it is the only match', () => {
+  const desktop = { width: 1440, height: 900 }
+  const belowFold = {
+    id: 'below-fold',
+    rect: { top: 1200, left: 100, width: 400, height: 80 },
+  }
+  assert.equal(isVisibleAnchorCandidate(belowFold, desktop), true)
+  assert.equal(rectIntersectsViewport(belowFold.rect, desktop), false)
+  assert.equal(pickFirstVisibleAnchor([belowFold], desktop)?.id, 'below-fold')
+})
+
+test('pickFirstVisibleAnchor prefers the in-viewport match when both are rendered', () => {
+  const mobile = { width: 390, height: 844 }
+  // Sidebar chip in a closed drawer: rendered size but inert — must lose.
+  const sidebarChip = {
+    id: 'sidebar-switch',
+    rect: { top: 788, left: -200, width: 80, height: 40 },
+    inertOrHidden: true,
+  }
+  const headerChip = {
+    id: 'header-switch',
+    rect: { top: 8, left: 48, width: 40, height: 40 },
+  }
+  // Both rendered (neither inert): prefer the one intersecting the viewport.
+  const offScreen = {
+    id: 'off-screen-copy',
+    rect: { top: 1200, left: 24, width: 342, height: 48 },
+  }
+  const onScreen = {
+    id: 'on-screen',
+    rect: { top: 100, left: 24, width: 342, height: 48 },
+  }
+  assert.equal(pickFirstVisibleAnchor([sidebarChip, headerChip], mobile)?.id, 'header-switch')
+  assert.equal(pickFirstVisibleAnchor([offScreen, onScreen], mobile)?.id, 'on-screen')
+  assert.equal(pickFirstVisibleAnchor([onScreen, offScreen], mobile)?.id, 'on-screen')
+})
+
 test('pickFirstVisibleAnchor rejects zero-size, display:none, and visibility:hidden', () => {
   const viewport = { width: 390, height: 844 }
   const zero = { id: 'zero', rect: { top: 10, left: 10, width: 0, height: 40 } }

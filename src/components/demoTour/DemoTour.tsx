@@ -33,10 +33,10 @@ import {
   type TourStepDef,
 } from '../../lib/demoTour'
 import {
-  afterScrollFrames,
   clickAppDialogDismiss,
   clickSelector,
   clampSpotlightRect,
+  ensureAnchorInView,
   expandRect,
   isAppDialogOpen,
   isNarrowViewport,
@@ -45,7 +45,7 @@ import {
   placeTooltip,
   prefersReducedMotion,
   readVerdictFromDom,
-  scrollTargetIntoView,
+  rectIntersectsViewport,
   verdictCtaBody,
   waitForSelector,
   type Rect,
@@ -167,6 +167,8 @@ export default function DemoTour() {
         navigate(first.route)
       }
       if (announce) setLiveMessage(announce)
+      setAnchorEl(null)
+      setSpot(null)
       setSetupFallback(null)
       setMode({ kind: 'tour', steps, index: 0, full })
     },
@@ -291,6 +293,9 @@ export default function DemoTour() {
         navigate(step.route)
       }
       waitingRef.current = false
+      // Drop previous step's spotlight immediately — never reuse a stale target.
+      setAnchorEl(null)
+      setSpot(null)
       setSetupFallback(null)
       setMode({ ...current, index: nextIndex })
     },
@@ -367,7 +372,12 @@ export default function DemoTour() {
       return
     }
 
+    // Clear previous spotlight/target immediately on step change.
+    setAnchorEl(null)
+    setSpot(null)
+
     let cancelled = false
+    const cancelSignal = { cancelled: false }
     const step = currentStep
     const stepIndex = mode.index
 
@@ -430,16 +440,11 @@ export default function DemoTour() {
         : isNarrowViewport()
           ? SHEET_FALLBACK_H
           : 0
-      scrollTargetIntoView(found, {
+      await ensureAnchorInView(found, {
         sheetHeight: sheetH,
         sheetTop: tipRect && tipRect.top > 0 ? tipRect.top : undefined,
+        signal: cancelSignal,
       })
-      // Re-measure after scroll (two frames); allow smooth scroll to settle.
-      await afterScrollFrames()
-      if (!prefersReducedMotion()) {
-        await new Promise(r => setTimeout(r, 280))
-        await afterScrollFrames()
-      }
       if (cancelled) return
       setAnchorEl(found)
     }
@@ -447,6 +452,7 @@ export default function DemoTour() {
     void resolve()
     return () => {
       cancelled = true
+      cancelSignal.cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when step identity changes
   }, [mode.kind, mode.kind === 'tour' ? mode.index : -1, currentStep?.id, location.pathname])
@@ -464,8 +470,8 @@ export default function DemoTour() {
       if (anchorEl) {
         const raw = expandRect(anchorEl.getBoundingClientRect())
         const rect = clampSpotlightRect(raw, viewport)
-        // Closing sheets can leave a ~12×12 ghost rect — never spotlight that.
-        if (!isUsableSpotlightRect(rect)) {
+        // Off-screen (mid-scroll) or closing-dialog ghosts — no spotlight yet.
+        if (!rectIntersectsViewport(raw, viewport) || !isUsableSpotlightRect(rect)) {
           setSpot(null)
           setTipPos(placeTooltip(null, tipSize, viewport))
         } else {
