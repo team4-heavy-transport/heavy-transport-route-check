@@ -28,6 +28,7 @@ import {
   applyOverviewFiltersToSearch,
   buildOverviewRoutes,
   countByStatus,
+  countRoutesWithoutGeometry,
   DEFAULT_OVERVIEW_FILTERS,
   filterOverviewRoutes,
   filtersAreActive,
@@ -39,6 +40,8 @@ import {
 } from '../lib/overviewRoutes'
 import { sampleTestPermits } from '../lib/routeCheck'
 
+const MOBILE_LIST_CAP = 5
+
 const verdictMeta = {
   READY: { label: 'Ready', icon: CheckCircle2, iconClass: 'green', badgeClass: 'ready' },
   HOLD: { label: 'Hold departure', icon: CircleX, iconClass: 'red', badgeClass: 'hold' },
@@ -46,33 +49,65 @@ const verdictMeta = {
 } as const
 
 function StatusPill({ status }: { status: OverviewRoute['status'] }) {
-  if (!status) return <b className="sample">Unchecked</b>
+  if (!status) {
+    return (
+      <b className="overview-status-pill sample">
+        Unchecked
+      </b>
+    )
+  }
   const meta = verdictMeta[status]
   const Icon = meta.icon
   return (
-    <b className={meta.badgeClass}>
+    <b className={`overview-status-pill ${meta.badgeClass}`}>
       <Icon size={14} aria-hidden /> {meta.label}
     </b>
   )
 }
 
-function SummaryList({ items }: { items: OverviewRoute['summaryItems'] }) {
-  if (!items.length) {
-    return <p className="overview-summary-empty">No blocking items on the latest check.</p>
+function routeMetaLine(route: OverviewRoute): string {
+  const parts: string[] = []
+  if (route.permitNumber) parts.push(route.permitNumber)
+  if (route.lastCheckedAt) parts.push(`Last checked ${formatBerlinDateTime(route.lastCheckedAt)}`)
+  else parts.push('Not checked yet')
+  if (route.source === 'example') parts.push('Example')
+  return parts.join(' · ')
+}
+
+function SummaryList({
+  items,
+  fallback,
+}: {
+  items: OverviewRoute['summaryItems']
+  fallback: OverviewRoute['summaryFallback']
+}) {
+  if (items.length) {
+    return (
+      <ul className="overview-summary-list">
+        {items.map(item => (
+          <li key={item.id} className={`is-${item.severity.toLowerCase()}`}>
+            <span className="overview-summary-dot" aria-hidden />
+            <span>
+              {item.id !== 'summary-more' ? (
+                <span className="overview-summary-sev">
+                  {item.severity === 'HOLD' ? 'Hold' : item.severity === 'VERIFY' ? 'Verify' : 'Ready'}
+                </span>
+              ) : null}
+              {item.label}
+            </span>
+          </li>
+        ))}
+      </ul>
+    )
   }
-  return (
-    <ul className="overview-summary-list">
-      {items.map(item => (
-        <li key={item.id} className={`is-${item.severity.toLowerCase()}`}>
-          <span className="overview-summary-dot" aria-hidden />
-          <span>
-            <span className="overview-summary-sev">{item.severity === 'HOLD' ? 'Hold' : item.severity === 'VERIFY' ? 'Verify' : 'Ready'}</span>
-            {item.label}
-          </span>
-        </li>
-      ))}
-    </ul>
-  )
+  if (fallback) {
+    return (
+      <p className={`overview-summary-fallback is-${fallback.severity.toLowerCase()}`} data-testid="overview-summary-fallback">
+        {fallback.label}
+      </p>
+    )
+  }
+  return <p className="overview-summary-empty">No blocking items on the latest check.</p>
 }
 
 function OverviewFiltersBar({
@@ -196,17 +231,11 @@ function RouteCard({
       data-testid={`overview-route-card-${route.id}`}
     >
       <button type="button" className="overview-route-card-main" onClick={onSelect}>
-        <div>
+        <div className="overview-route-card-copy">
           <strong>{route.title}</strong>
-          <span>
-            {route.origin} → {route.destination}
-            {route.source === 'example' ? ' · Example' : ''}
-          </span>
+          <span className="overview-route-card-meta">{routeMetaLine(route)}</span>
         </div>
         <StatusPill status={route.status} />
-        <span className="overview-route-card-checked">
-          {route.lastCheckedAt ? `Last checked ${formatBerlinDateTime(route.lastCheckedAt)}` : 'Not checked yet'}
-        </span>
       </button>
       <button
         type="button"
@@ -228,7 +257,7 @@ function RouteCard({
           {route.permitNumber ? (
             <p><span>Permit</span> {route.permitNumber}</p>
           ) : null}
-          <SummaryList items={route.summaryItems} />
+          <SummaryList items={route.summaryItems} fallback={route.summaryFallback} />
           {route.source === 'job' ? (
             <Link to={`/route-checks?job=${route.id}&run=1`} className="overview-route-open">
               Open route check <ArrowRight size={14} aria-hidden />
@@ -245,6 +274,51 @@ function RouteCard({
         </div>
       ) : null}
     </article>
+  )
+}
+
+function AlertGroups({ alerts }: { alerts: OverviewRoute['alerts'] }) {
+  const groups = groupAlertsByStatus(alerts)
+  const emptyCount = (['HOLD', 'VERIFY', 'READY'] as const).filter(sev => groups[sev].length === 0).length
+
+  return (
+    <div className="overview-fullmap-alerts" data-testid="overview-fullmap-alerts">
+      {(['HOLD', 'VERIFY', 'READY'] as const).map(sev => {
+        const list = groups[sev]
+        if (!list.length) return null
+        return (
+          <section key={sev} className={`overview-alert-group is-${sev.toLowerCase()}`}>
+            <h3>
+              {sev === 'HOLD' ? 'Hold' : sev === 'VERIFY' ? 'Verify' : 'Ready / resolved'}
+              <span>{list.length}</span>
+            </h3>
+            <ul>
+              {list.map(item => (
+                <li key={item.id}>
+                  <span className="overview-alert-change">{item.change || item.detail}</span>
+                  {item.detail && item.change && item.detail !== item.change ? (
+                    <span className="overview-alert-detail">{item.detail}</span>
+                  ) : null}
+                  <time dateTime={item.runAt || item.time}>
+                    {formatBerlinDateTime(item.runAt || item.time)}
+                  </time>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )
+      })}
+      {emptyCount === 3 ? (
+        <p className="overview-summary-empty">No alerts for this route.</p>
+      ) : emptyCount > 0 ? (
+        <p className="overview-alerts-empty-groups">
+          {emptyCount === 1 ? '1 empty severity group hidden' : `${emptyCount} empty severity groups hidden`}
+        </p>
+      ) : null}
+      <Link to="/activity" className="overview-route-open overview-alerts-link">
+        Open in Alerts &amp; history <ArrowRight size={14} aria-hidden />
+      </Link>
+    </div>
   )
 }
 
@@ -271,6 +345,8 @@ function FullSizeMapDialog({
   const selected = routes.find(r => r.id === selectedId) || routes[0] || null
   const titleId = useId()
   const scrollY = useRef(0)
+  const [mobilePane, setMobilePane] = useState<'map' | 'list'>('map')
+  const geometryStats = countRoutesWithoutGeometry(routes)
 
   useEffect(() => {
     if (!open) return
@@ -299,6 +375,8 @@ function FullSizeMapDialog({
         return
       }
       if (event.key !== 'Tab' || !node) return
+      // Let the Demo tour tip keep focus while it is open above this overlay.
+      if (document.querySelector('[data-demo-tour-root] .demo-tour-tooltip')) return
       const list = focusables()
       if (!list.length) return
       const first = list[0]
@@ -320,14 +398,23 @@ function FullSizeMapDialog({
     }
   }, [open, onClose, restoreFocusRef])
 
+  useEffect(() => {
+    if (open) setMobilePane('map')
+  }, [open])
+
   if (!open) return null
 
-  const alertGroups = selected ? groupAlertsByStatus(selected.alerts) : null
+  const badgeSubtitle =
+    geometryStats.missing > 0
+      ? `${geometryStats.missing} of ${geometryStats.total} routes have no map geometry`
+      : mode === 'all'
+        ? 'Click a route to focus'
+        : selected?.permitNumber || 'Single route'
 
   return (
     <div
       ref={dialogRef}
-      className="overview-fullmap"
+      className={`overview-fullmap${mobilePane === 'list' ? ' is-mobile-list' : ' is-mobile-map'}`}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -357,6 +444,24 @@ function FullSizeMapDialog({
             Single route
           </button>
         </div>
+        <div className="overview-fullmap-mobile-toggle" role="group" aria-label="Map or list">
+          <button
+            type="button"
+            className={mobilePane === 'map' ? 'is-active' : ''}
+            aria-pressed={mobilePane === 'map'}
+            onClick={() => setMobilePane('map')}
+          >
+            Map
+          </button>
+          <button
+            type="button"
+            className={mobilePane === 'list' ? 'is-active' : ''}
+            aria-pressed={mobilePane === 'list'}
+            onClick={() => setMobilePane('list')}
+          >
+            List
+          </button>
+        </div>
         <button
           type="button"
           className="market-button secondary overview-fullmap-minimise"
@@ -377,7 +482,10 @@ function FullSizeMapDialog({
                 className={`overview-fullmap-card${route.id === selectedId ? ' is-selected' : ''}`}
                 onClick={() => onSelect(route.id)}
               >
-                <strong>{route.title}</strong>
+                <span className="overview-route-card-copy">
+                  <strong>{route.title}</strong>
+                  <span className="overview-route-card-meta">{routeMetaLine(route)}</span>
+                </span>
                 <StatusPill status={route.status} />
               </button>
             ))}
@@ -386,8 +494,9 @@ function FullSizeMapDialog({
             routes={routes}
             selectedId={selectedId}
             onSelect={onSelect}
+            fitPolicy="all"
             badgeTitle={`${routes.length} route${routes.length === 1 ? '' : 's'}`}
-            badgeSubtitle="Click a route to focus"
+            badgeSubtitle={badgeSubtitle}
             dataTestId="overview-fullmap-all"
           />
         </div>
@@ -418,36 +527,13 @@ function FullSizeMapDialog({
               <span>Last checked</span>{' '}
               {selected.lastCheckedAt ? formatBerlinDateTime(selected.lastCheckedAt) : 'Not checked yet'}
             </p>
-            <div className="overview-fullmap-alerts" data-testid="overview-fullmap-alerts">
-              {alertGroups && (['HOLD', 'VERIFY', 'READY'] as const).map(sev => (
-                <section key={sev}>
-                  <h3>
-                    {sev === 'HOLD' ? 'Hold' : sev === 'VERIFY' ? 'Verify' : 'Ready / resolved'}
-                    <span>{alertGroups[sev].length}</span>
-                  </h3>
-                  {alertGroups[sev].length ? (
-                    <ul>
-                      {alertGroups[sev].map(alert => (
-                        <li key={alert.id}>{alert.change || alert.detail}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="overview-summary-empty">None</p>
-                  )}
-                </section>
-              ))}
-              {selected.summaryItems.length > 0 && selected.alerts.length === 0 ? (
-                <section>
-                  <h3>Latest evidence</h3>
-                  <SummaryList items={selected.summaryItems} />
-                </section>
-              ) : null}
-            </div>
+            <AlertGroups alerts={selected.alerts} />
           </aside>
           <OverviewRoutesMap
             routes={[selected]}
             selectedId={selected.id}
             focusId={selected.id}
+            fitPolicy="focus"
             badgeTitle={selected.title}
             badgeSubtitle={selected.permitNumber || 'Single route'}
             dataTestId="overview-fullmap-single-map"
@@ -460,11 +546,16 @@ function FullSizeMapDialog({
   )
 }
 
+function cardDomId(routeId: string) {
+  return `overview-card-${routeId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+}
+
 export default function MarketplaceOverview() {
   const { history, alerts } = useRouteMonitoring()
   const { jobs } = useJobs()
   const [searchParams, setSearchParams] = useSearchParams()
   const fullMapButtonRef = useRef<HTMLButtonElement>(null)
+  const cardsRef = useRef<HTMLDivElement>(null)
 
   const filters = useMemo(() => parseOverviewFilters(searchParams), [searchParams])
   const mapFull = searchParams.get('map') === 'full'
@@ -477,10 +568,23 @@ export default function MarketplaceOverview() {
   const showingExamples = allRoutes.length > 0 && allRoutes.every(r => r.source === 'example')
   const filteredRoutes = useMemo(() => filterOverviewRoutes(allRoutes, filters), [allRoutes, filters])
   const statusCounts = useMemo(() => countByStatus(allRoutes), [allRoutes])
+  const geometryStats = countRoutesWithoutGeometry(filteredRoutes)
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [fullMapMode, setFullMapMode] = useState<'all' | 'single'>('all')
+  const [listExpanded, setListExpanded] = useState(false)
+  const [narrowList, setNarrowList] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 760px)').matches : false,
+  )
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 760px)')
+    const sync = () => setNarrowList(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
 
   useEffect(() => {
     if (!filteredRoutes.length) {
@@ -499,6 +603,10 @@ export default function MarketplaceOverview() {
   useEffect(() => {
     if (mapFull && routeParam) setFullMapMode('single')
   }, [mapFull, routeParam])
+
+  useEffect(() => {
+    setListExpanded(false)
+  }, [filters])
 
   const setFilters = (next: OverviewFilters) => {
     setSearchParams(prev => applyOverviewFiltersToSearch(prev, next), { replace: true })
@@ -524,8 +632,13 @@ export default function MarketplaceOverview() {
     }, { replace: true })
   }
 
-  const selectRoute = (id: string) => {
+  const selectRoute = (id: string, opts?: { scrollToCard?: boolean }) => {
     setSelectedId(id)
+    if (opts?.scrollToCard) {
+      queueMicrotask(() => {
+        document.getElementById(cardDomId(id))?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+    }
     if (mapFull && fullMapMode === 'single') {
       setSearchParams(prev => {
         const next = new URLSearchParams(prev)
@@ -542,6 +655,12 @@ export default function MarketplaceOverview() {
     else setExpandedIds(new Set(filteredRoutes.map(r => r.id)))
   }
 
+  const listRoutes =
+    !narrowList || listExpanded || filteredRoutes.length <= MOBILE_LIST_CAP
+      ? filteredRoutes
+      : filteredRoutes.slice(0, MOBILE_LIST_CAP)
+  const listHasMore = narrowList && filteredRoutes.length > MOBILE_LIST_CAP && !listExpanded
+
   const emptyFilterMessage: ReactNode = filtersAreActive(filters) ? (
     <div className="overview-empty-filter" data-testid="overview-empty-filter">
       <p>No routes match these filters.</p>
@@ -550,6 +669,11 @@ export default function MarketplaceOverview() {
       </button>
     </div>
   ) : null
+
+  const mapBadgeSubtitle =
+    geometryStats.missing > 0
+      ? `${geometryStats.missing} of ${geometryStats.total} routes have no map geometry`
+      : 'Coloured by status'
 
   return (
     <div className="market-page transport-overview">
@@ -616,20 +740,15 @@ export default function MarketplaceOverview() {
         {filteredRoutes.length === 0 ? (
           emptyFilterMessage
         ) : (
-          <div className="transport-route-list overview-upcoming-list" data-tour="overview-route-list">
-            {filteredRoutes.map(route => {
-              const href = route.source === 'job'
-                ? `/route-checks?job=${route.id}&run=1`
-                : route.permitId
-                  ? `/route-checks?permit=${route.permitId}`
-                  : '/route-checks'
-              return (
-                <Link
-                  to={href}
+          <>
+            <div className="transport-route-list overview-upcoming-list" data-tour="overview-route-list">
+              {listRoutes.map(route => (
+                <button
+                  type="button"
                   key={`list-${route.id}`}
                   data-route-id={route.id}
                   className={route.id === selectedId ? 'is-selected' : undefined}
-                  onClick={() => setSelectedId(route.id)}
+                  onClick={() => selectRoute(route.id, { scrollToCard: true })}
                 >
                   <span className={`transport-list-icon ${route.status ? verdictMeta[route.status].iconClass : 'blue'}`}>
                     <Route size={16} aria-hidden />
@@ -639,18 +758,32 @@ export default function MarketplaceOverview() {
                       {route.title}
                       {route.source === 'example' ? <em className="overview-example-tag"> Example</em> : null}
                     </strong>
-                    <span>
-                      {route.origin} → {route.destination}
-                      {route.permitNumber ? ` · ${route.permitNumber}` : ''}
-                      {route.lastCheckedAt ? ` · Checked ${formatBerlinDateTime(route.lastCheckedAt)}` : ''}
-                    </span>
+                    <span>{routeMetaLine(route)}</span>
                   </div>
                   <StatusPill status={route.status} />
                   <ArrowRight size={16} aria-hidden />
-                </Link>
-              )
-            })}
-          </div>
+                </button>
+              ))}
+            </div>
+            {listHasMore ? (
+              <button
+                type="button"
+                className="overview-show-all-list"
+                data-testid="overview-show-all-list"
+                onClick={() => setListExpanded(true)}
+              >
+                Show all {filteredRoutes.length} routes
+              </button>
+            ) : narrowList && listExpanded && filteredRoutes.length > MOBILE_LIST_CAP ? (
+              <button
+                type="button"
+                className="overview-show-all-list"
+                onClick={() => setListExpanded(false)}
+              >
+                Show fewer
+              </button>
+            ) : null}
+          </>
         )}
       </section>
 
@@ -692,30 +825,31 @@ export default function MarketplaceOverview() {
               <OverviewRoutesMap
                 routes={filteredRoutes}
                 selectedId={selectedId}
-                onSelect={selectRoute}
-                focusId={selectedId}
+                onSelect={id => selectRoute(id)}
+                fitPolicy="all"
                 badgeTitle={`${filteredRoutes.length} route${filteredRoutes.length === 1 ? '' : 's'}`}
-                badgeSubtitle="Coloured by status"
+                badgeSubtitle={mapBadgeSubtitle}
                 dataTestId="overview-block-map"
               />
             </div>
-            <div className="overview-route-block-cards" data-tour="overview-route-cards">
+            <div className="overview-route-block-cards" data-tour="overview-route-cards" ref={cardsRef}>
               {filteredRoutes.map(route => (
-                <RouteCard
-                  key={`card-${route.id}`}
-                  route={route}
-                  selected={route.id === selectedId}
-                  expanded={expandedIds.has(route.id)}
-                  onSelect={() => selectRoute(route.id)}
-                  onToggle={() => {
-                    setExpandedIds(prev => {
-                      const next = new Set(prev)
-                      if (next.has(route.id)) next.delete(route.id)
-                      else next.add(route.id)
-                      return next
-                    })
-                  }}
-                />
+                <div key={`card-wrap-${route.id}`} id={cardDomId(route.id)}>
+                  <RouteCard
+                    route={route}
+                    selected={route.id === selectedId}
+                    expanded={expandedIds.has(route.id)}
+                    onSelect={() => selectRoute(route.id)}
+                    onToggle={() => {
+                      setExpandedIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(route.id)) next.delete(route.id)
+                        else next.add(route.id)
+                        return next
+                      })
+                    }}
+                  />
+                </div>
               ))}
             </div>
           </div>

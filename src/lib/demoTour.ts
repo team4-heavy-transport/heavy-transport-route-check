@@ -172,7 +172,6 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     body: 'Switch between All routes (cards + map) and Single route (vehicle, alerts by status, last checked, and that track only).',
     anchor: '[data-tour="overview-fullmap-modes"]',
     route: '/',
-    optional: true,
   },
   {
     id: 'overview-fullmap-minimise',
@@ -181,7 +180,6 @@ export const TOUR_STEPS: readonly TourStepDef[] = [
     body: 'Minimise (or Esc) closes the full-size map and restores your place on Overview.',
     anchor: '[data-tour="overview-fullmap-minimise"]',
     route: '/',
-    optional: true,
   },
 
   // ── Route check (end to end) ──────────────────────────────────────────

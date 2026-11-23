@@ -16,6 +16,7 @@ export type OverviewSummaryItem = {
 
 export type OverviewRoute = {
   id: string
+  /** Route lead title: `origin → destination` or job name when ends look like coordinates. */
   title: string
   origin: string
   destination: string
@@ -23,10 +24,15 @@ export type OverviewRoute = {
   status: RouteVerdict | null
   addedAt: string
   lastCheckedAt: string | null
+  plannedDeparture: string | null
   vehicle: VehicleDims | null
   latestEvidence: RouteEvidence[]
   summaryItems: OverviewSummaryItem[]
+  /** When no itemised rows, show this line in the route's severity colour. */
+  summaryFallback: OverviewSummaryItem | null
   alerts: MonitoringAlert[]
+  /** Check history ids merged into this route (for alert matching). */
+  checkIds: string[]
   /** Parsed track points, or null when geometry is unknown / still URL-backed. */
   geometry: LatLng[] | null
   /** Sample/test permit GPX URL when geometry must be loaded async. */
@@ -34,6 +40,7 @@ export type OverviewRoute = {
   source: OverviewRouteSource
   jobId?: string
   permitId?: string
+  routeLabel?: string
 }
 
 export type OverviewStatusFilter = RouteVerdict
@@ -54,6 +61,8 @@ export const DEFAULT_OVERVIEW_FILTERS: OverviewFilters = {
   checked: 'any',
 }
 
+export const SUMMARY_ITEM_CAP = 6
+
 const STATUS_ORDER: Record<OverviewSummarySeverity, number> = {
   HOLD: 0,
   VERIFY: 1,
@@ -61,6 +70,47 @@ const STATUS_ORDER: Record<OverviewSummarySeverity, number> = {
 }
 
 const MS_DAY = 24 * 60 * 60 * 1000
+
+/** Loose match for numeric lat/lon pairs shown as "53.5511, 9.9937". */
+const COORD_PAIR_RE =
+  /^\s*-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?\s*$/
+
+export function looksLikeCoordinates(value: string | null | undefined): boolean {
+  if (!value) return false
+  return COORD_PAIR_RE.test(value.trim())
+}
+
+/**
+ * Prefer a human corridor/job name when origin/destination look like raw coordinates.
+ */
+export function routeDisplayTitle(opts: {
+  origin?: string | null
+  destination?: string | null
+  jobName?: string | null
+  corridor?: string | null
+  routeLabel?: string | null
+  permitName?: string | null
+}): string {
+  const origin = (opts.origin || '').trim()
+  const destination = (opts.destination || '').trim()
+  const coords = looksLikeCoordinates(origin) || looksLikeCoordinates(destination)
+  if (coords) {
+    const fallback =
+      (opts.jobName || '').trim() ||
+      (opts.corridor || '').trim() ||
+      (opts.routeLabel || '').trim() ||
+      (opts.permitName || '').trim()
+    if (fallback) return fallback
+  }
+  if (origin && destination) return `${origin} → ${destination}`
+  if (origin || destination) return origin || destination
+  return (
+    (opts.jobName || '').trim() ||
+    (opts.routeLabel || '').trim() ||
+    (opts.permitName || '').trim() ||
+    'Route'
+  )
+}
 
 export function evidenceToSummarySeverity(item: Pick<RouteEvidence, 'state'>): OverviewSummarySeverity {
   if (item.state === 'danger' || item.state === 'conflict') return 'HOLD'
@@ -80,6 +130,96 @@ export function buildSummaryItems(evidence: RouteEvidence[] | undefined | null):
     severity: evidenceToSummarySeverity(item),
   }))
   return sortSummaryBySeverity(items)
+}
+
+/**
+ * Build expanded-card summary rows from evidence when present, else confirmOnSite
+ * (+ linked alerts). Cap at SUMMARY_ITEM_CAP with a "+N more" tail.
+ * For HOLD/VERIFY with nothing to itemise, returns `fallback` from the record summary.
+ */
+export function buildRouteSummary(opts: {
+  evidence?: RouteEvidence[] | null
+  confirmOnSite?: string[] | null
+  summary?: string | null
+  title?: string | null
+  impact?: string | null
+  verdict?: RouteVerdict | null
+  alerts?: MonitoringAlert[] | null
+}): { items: OverviewSummaryItem[]; fallback: OverviewSummaryItem | null } {
+  const evidence = opts.evidence || []
+  const alerts = opts.alerts || []
+  const verdict = opts.verdict ?? null
+  const confirmSeverity: OverviewSummarySeverity =
+    verdict === 'HOLD' ? 'HOLD' : verdict === 'VERIFY' ? 'VERIFY' : 'VERIFY'
+
+  let items: OverviewSummaryItem[] = []
+
+  if (evidence.length > 0) {
+    items = buildSummaryItems(evidence)
+  } else {
+    const confirmItems = (opts.confirmOnSite || [])
+      .map((label, index) => ({
+        id: `confirm-${index}`,
+        label: label.trim() || 'Confirm on site',
+        severity: confirmSeverity,
+      }))
+      .filter(item => item.label)
+    items = [...confirmItems]
+  }
+
+  const alertItems: OverviewSummaryItem[] = alerts.map(alert => ({
+    id: `alert-${alert.id}`,
+    label: (alert.change || alert.detail || 'Alert').trim() || 'Alert',
+    severity:
+      alert.status === 'Resolved'
+        ? 'READY'
+        : alert.severity === 'HOLD'
+          ? 'HOLD'
+          : alert.severity === 'VERIFY'
+            ? 'VERIFY'
+            : 'READY',
+  }))
+
+  // Deduplicate by label+severity so confirm lines and alerts don't double up.
+  const seen = new Set(items.map(i => `${i.severity}:${i.label.toLowerCase()}`))
+  for (const alertItem of alertItems) {
+    const key = `${alertItem.severity}:${alertItem.label.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    items.push(alertItem)
+  }
+
+  items = sortSummaryBySeverity(items)
+
+  if (items.length > SUMMARY_ITEM_CAP) {
+    const extra = items.length - SUMMARY_ITEM_CAP
+    items = [
+      ...items.slice(0, SUMMARY_ITEM_CAP),
+      {
+        id: 'summary-more',
+        label: `+${extra} more`,
+        severity: items[SUMMARY_ITEM_CAP]?.severity ?? 'READY',
+      },
+    ]
+  }
+
+  if (items.length > 0) {
+    return { items, fallback: null }
+  }
+
+  if (verdict === 'HOLD' || verdict === 'VERIFY') {
+    const label =
+      (opts.summary || '').trim() ||
+      (opts.impact || '').trim() ||
+      (opts.title || '').trim() ||
+      (verdict === 'HOLD' ? 'Hold departure' : 'Verify evidence')
+    return {
+      items: [],
+      fallback: { id: 'summary-fallback', label, severity: verdict },
+    }
+  }
+
+  return { items: [], fallback: null }
 }
 
 export function overviewRouteKeyFromCheck(record: Pick<CheckHistoryRecord, 'jobId' | 'permitNumber' | 'routeLabel'>): string {
@@ -119,15 +259,32 @@ function findPermitByNumber(
   return examplePermits.find(p => p.permitNumber.trim().toLowerCase() === needle)
 }
 
-function alertsForRoute(
+/**
+ * Collect alerts linked to a route via check ids, job id, route id, or routeLabel.
+ */
+export function alertsForRoute(
   alerts: MonitoringAlert[],
-  routeId: string,
-  jobId?: string,
+  opts: {
+    routeId: string
+    jobId?: string
+    routeLabel?: string
+    checkIds?: string[]
+  },
 ): MonitoringAlert[] {
-  return alerts.filter(alert => {
+  const checkIds = new Set(opts.checkIds || [])
+  const jobId = opts.jobId
+  const routeId = opts.routeId
+  const label = (opts.routeLabel || '').trim().toLowerCase()
+
+  const matched = alerts.filter(alert => {
     if (jobId && (alert.jobId === jobId || alert.routeId === jobId)) return true
-    return alert.routeId === routeId || alert.jobId === routeId
+    if (alert.routeId === routeId || alert.jobId === routeId) return true
+    if (checkIds.has(alert.routeId) || (alert.jobId && checkIds.has(alert.jobId))) return true
+    if (label && (alert.routeLabel || '').trim().toLowerCase() === label) return true
+    return false
   })
+
+  return [...matched].sort((a, b) => Date.parse(b.runAt || b.time) - Date.parse(a.runAt || a.time))
 }
 
 function exampleToRoute(permit: TestPermit): OverviewRoute {
@@ -140,15 +297,103 @@ function exampleToRoute(permit: TestPermit): OverviewRoute {
     status: permit.expectedVerdict ?? null,
     addedAt: permit.validFrom || new Date(0).toISOString(),
     lastCheckedAt: null,
+    plannedDeparture: null,
     vehicle: permit.vehicle,
     latestEvidence: [],
     summaryItems: [],
+    summaryFallback: null,
     alerts: [],
+    checkIds: [],
     geometry: null,
     gpxFile: permit.gpxFile,
     source: 'example',
     permitId: permit.id,
+    routeLabel: `${permit.originShort} → ${permit.destinationShort}`,
   }
+}
+
+function splitRouteLabel(label: string | undefined | null): { origin: string; destination: string } {
+  const parts = (label || '').split(/\s*→\s*/)
+  return {
+    origin: parts[0]?.trim() || '',
+    destination: parts[1]?.trim() || '',
+  }
+}
+
+/**
+ * Attach a check without jobId to the most recently checked job sharing the same
+ * permitNumber. Separate jobs with the same permit stay separate entries.
+ */
+export function attachOrphanChecksToJobs(
+  jobs: SavedJob[],
+  history: CheckHistoryRecord[],
+): { jobChecks: Map<string, CheckHistoryRecord[]>; remainingOrphans: CheckHistoryRecord[] } {
+  const jobChecks = new Map<string, CheckHistoryRecord[]>()
+  for (const job of jobs) {
+    jobChecks.set(
+      job.id,
+      history.filter(h => h.jobId === job.id),
+    )
+  }
+
+  const orphans = history.filter(h => !h.jobId)
+  const remainingOrphans: CheckHistoryRecord[] = []
+
+  const jobsByPermit = new Map<string, SavedJob[]>()
+  for (const job of jobs) {
+    const key = (job.permitNumber || '').trim().toLowerCase()
+    if (!key) continue
+    const list = jobsByPermit.get(key) || []
+    list.push(job)
+    jobsByPermit.set(key, list)
+  }
+
+  for (const record of orphans) {
+    const permit = (record.permitNumber || '').trim().toLowerCase()
+    const candidates = permit ? jobsByPermit.get(permit) || [] : []
+    if (!candidates.length) {
+      remainingOrphans.push(record)
+      continue
+    }
+    // Most recently checked job (lastCheckedAt / last history run / updatedAt).
+    const ranked = [...candidates].sort((a, b) => {
+      const aChecks = jobChecks.get(a.id) || []
+      const bChecks = jobChecks.get(b.id) || []
+      const aLatest = Math.max(
+        Date.parse(a.lastCheckedAt || '') || 0,
+        ...aChecks.map(c => Date.parse(c.runAt) || 0),
+        Date.parse(a.updatedAt) || 0,
+      )
+      const bLatest = Math.max(
+        Date.parse(b.lastCheckedAt || '') || 0,
+        ...bChecks.map(c => Date.parse(c.runAt) || 0),
+        Date.parse(b.updatedAt) || 0,
+      )
+      return bLatest - aLatest
+    })
+    const target = ranked[0]
+    const list = jobChecks.get(target.id) || []
+    list.push(record)
+    jobChecks.set(target.id, list)
+  }
+
+  return { jobChecks, remainingOrphans }
+}
+
+export function sortOverviewRoutes(routes: OverviewRoute[]): OverviewRoute[] {
+  return [...routes].sort((a, b) => {
+    const aSev = a.status ? STATUS_ORDER[a.status] : 99
+    const bSev = b.status ? STATUS_ORDER[b.status] : 99
+    if (aSev !== bSev) return aSev - bSev
+
+    const aDep = Date.parse(a.plannedDeparture || '') || Number.POSITIVE_INFINITY
+    const bDep = Date.parse(b.plannedDeparture || '') || Number.POSITIVE_INFINITY
+    if (aDep !== bDep) return aDep - bDep
+
+    const aChecked = Date.parse(a.lastCheckedAt || '') || 0
+    const bChecked = Date.parse(b.lastCheckedAt || '') || 0
+    return bChecked - aChecked
+  })
 }
 
 export function buildOverviewRoutes(input: {
@@ -159,46 +404,72 @@ export function buildOverviewRoutes(input: {
 }): OverviewRoute[] {
   const alerts = input.alerts || []
   const byId = new Map<string, OverviewRoute>()
+  const { jobChecks, remainingOrphans } = attachOrphanChecksToJobs(input.jobs, input.history)
 
   // Jobs first — keyed by job id.
   for (const job of input.jobs) {
-    const jobChecks = input.history
-      .filter(h => h.jobId === job.id)
-      .sort((a, b) => Date.parse(b.runAt) - Date.parse(a.runAt))
-    const latest = jobChecks[0]
+    const checks = [...(jobChecks.get(job.id) || [])].sort(
+      (a, b) => Date.parse(b.runAt) - Date.parse(a.runAt),
+    )
+    const latest = checks[0]
     const status = latest?.verdict ?? job.lastVerdict ?? null
     const lastCheckedAt = latest?.runAt ?? job.lastCheckedAt ?? null
     const evidence = latest?.evidence || []
     const permit = findPermitByNumber(input.examplePermits, job.permitNumber)
     const geometry = parseJobGeometry(job.gpxContent)
+    const checkIds = checks.map(c => c.id)
+    const routeLabel = `${job.origin} → ${job.destination}`
+    const routeAlerts = alertsForRoute(alerts, {
+      routeId: job.id,
+      jobId: job.id,
+      routeLabel: job.name || routeLabel,
+      checkIds,
+    })
+    const summary = buildRouteSummary({
+      evidence,
+      confirmOnSite: latest?.confirmOnSite,
+      summary: latest?.summary ?? job.lastSummary,
+      title: latest?.title,
+      impact: latest?.impact,
+      verdict: status,
+      alerts: routeAlerts,
+    })
+    const title = routeDisplayTitle({
+      origin: job.origin,
+      destination: job.destination,
+      jobName: job.name,
+      corridor: job.corridor,
+      routeLabel,
+    })
+
     byId.set(job.id, {
       id: job.id,
-      title: job.name || `${job.origin} → ${job.destination}`,
+      title,
       origin: job.origin,
       destination: job.destination,
       permitNumber: job.permitNumber,
       status,
       addedAt: job.createdAt,
       lastCheckedAt,
+      plannedDeparture: job.plannedDeparture || null,
       vehicle: job.vehicle,
       latestEvidence: evidence,
-      summaryItems: buildSummaryItems(evidence),
-      alerts: alertsForRoute(alerts, job.id, job.id),
+      summaryItems: summary.items,
+      summaryFallback: summary.fallback,
+      alerts: routeAlerts,
+      checkIds,
       geometry,
       gpxFile: geometry ? null : (permit?.gpxFile ?? null),
       source: 'job',
       jobId: job.id,
       permitId: permit?.id,
+      routeLabel,
     })
   }
 
-  // History without a job — keyed by permitNumber else routeLabel.
-  const orphanHistory = input.history
-    .filter(h => !h.jobId || !byId.has(h.jobId))
-    .filter(h => !h.jobId)
-
+  // Remaining history without a job — keyed by permitNumber else routeLabel.
   const orphanGroups = new Map<string, CheckHistoryRecord[]>()
-  for (const record of orphanHistory) {
+  for (const record of remainingOrphans) {
     const key = overviewRouteKeyFromCheck(record)
     const list = orphanGroups.get(key) || []
     list.push(record)
@@ -211,29 +482,59 @@ export function buildOverviewRoutes(input: {
     const earliest = [...records].sort((a, b) => Date.parse(a.runAt) - Date.parse(b.runAt))[0]
     const permit = findPermitByNumber(input.examplePermits, latest.permitNumber || '')
     const evidence = latest.evidence || []
+    const { origin: labelOrigin, destination: labelDestination } = splitRouteLabel(latest.routeLabel)
+    const origin = labelOrigin || latest.permitName || ''
+    const destination = labelDestination || ''
+    const checkIds = records.map(r => r.id)
+    const routeAlerts = alertsForRoute(alerts, {
+      routeId: key,
+      routeLabel: latest.routeLabel,
+      checkIds,
+    })
+    const summary = buildRouteSummary({
+      evidence,
+      confirmOnSite: latest.confirmOnSite,
+      summary: latest.summary,
+      title: latest.title,
+      impact: latest.impact,
+      verdict: latest.verdict,
+      alerts: routeAlerts,
+    })
+    const title = routeDisplayTitle({
+      origin,
+      destination,
+      routeLabel: latest.routeLabel,
+      permitName: latest.permitName,
+      corridor: permit?.corridor,
+    })
+
     byId.set(key, {
       id: key,
-      title: latest.title || latest.permitName || latest.routeLabel,
-      origin: latest.routeLabel?.split(/\s*→\s*/)[0]?.trim() || latest.permitName,
-      destination: latest.routeLabel?.split(/\s*→\s*/)[1]?.trim() || '',
+      title,
+      origin,
+      destination,
       permitNumber: latest.permitNumber || '',
       status: latest.verdict,
       addedAt: earliest.runAt,
       lastCheckedAt: latest.runAt,
+      plannedDeparture: null,
       vehicle: latest.vehicle ?? permit?.vehicle ?? null,
       latestEvidence: evidence,
-      summaryItems: buildSummaryItems(evidence),
-      alerts: alertsForRoute(alerts, key),
+      summaryItems: summary.items,
+      summaryFallback: summary.fallback,
+      alerts: routeAlerts,
+      checkIds,
       geometry: null,
       gpxFile: permit?.gpxFile ?? null,
       source: 'check',
       permitId: permit?.id,
+      routeLabel: latest.routeLabel,
     })
   }
 
   const routes = [...byId.values()]
   if (routes.length > 0) {
-    return routes.sort((a, b) => Date.parse(b.addedAt) - Date.parse(a.addedAt))
+    return sortOverviewRoutes(routes)
   }
 
   // Empty account → example permits in the same list.
@@ -373,10 +674,30 @@ export function groupAlertsByStatus(alerts: MonitoringAlert[]): {
   READY: MonitoringAlert[]
 } {
   const groups = { HOLD: [] as MonitoringAlert[], VERIFY: [] as MonitoringAlert[], READY: [] as MonitoringAlert[] }
-  for (const alert of alerts) {
-    if (alert.severity === 'HOLD') groups.HOLD.push(alert)
-    else if (alert.severity === 'VERIFY') groups.VERIFY.push(alert)
-    else groups.READY.push(alert)
+  const sorted = [...alerts].sort(
+    (a, b) => Date.parse(b.runAt || b.time) - Date.parse(a.runAt || a.time),
+  )
+  for (const alert of sorted) {
+    if (alert.status === 'Resolved') {
+      groups.READY.push(alert)
+    } else if (alert.severity === 'HOLD') {
+      groups.HOLD.push(alert)
+    } else if (alert.severity === 'VERIFY') {
+      groups.VERIFY.push(alert)
+    } else {
+      groups.READY.push(alert)
+    }
   }
   return groups
+}
+
+/** True when a route has no inline geometry and no GPX URL to load. */
+export function routeLacksMapGeometry(route: OverviewRoute): boolean {
+  const hasGeom = Boolean(route.geometry && route.geometry.length >= 2)
+  return !hasGeom && !route.gpxFile
+}
+
+export function countRoutesWithoutGeometry(routes: OverviewRoute[]): { missing: number; total: number } {
+  const missing = routes.filter(routeLacksMapGeometry).length
+  return { missing, total: routes.length }
 }

@@ -665,8 +665,15 @@ async function main() {
   for (const [width, height] of [[375, 667], [390, 844]]) {
     await page.setViewportSize({ width, height })
     await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
     const skip = page.getByRole('button', { name: /skip/i })
     if (await skip.count()) await skip.first().click().catch(() => {})
+    await page.locator('[data-tour="overview-filters"]').waitFor({ timeout: 15000 })
+    await page.waitForFunction(() => {
+      const list = document.querySelectorAll('[data-tour="overview-route-list"] button, [data-tour="overview-route-list"] a').length
+      const cards = document.querySelectorAll('[data-tour="overview-route-cards"] .overview-route-card').length
+      return list > 0 && cards > 0
+    }, null, { timeout: 15000 }).catch(() => {})
     const overflow = await page.evaluate(() => {
       const root = document.querySelector('.transport-overview') || document.body
       return {
@@ -680,6 +687,31 @@ async function main() {
       !overflow.docOverflow && overflow.scrollWidth <= overflow.clientWidth + 1,
       JSON.stringify(overflow),
     )
+    const listCount = await page.locator('[data-tour="overview-route-list"] button, [data-tour="overview-route-list"] a').count()
+    const blockCount = await page.locator('[data-tour="overview-route-cards"] .overview-route-card').count()
+    const showAll = page.getByTestId('overview-show-all-list')
+    if (blockCount > 5) {
+      record(
+        `Overview mobile list caps at 5 with Show all at ${width}×${height}`,
+        listCount === 5 && (await showAll.count()) > 0,
+        `list=${listCount} block=${blockCount}`,
+      )
+      if (await showAll.count()) {
+        await showAll.click()
+        const expanded = await page.locator('[data-tour="overview-route-list"] button, [data-tour="overview-route-list"] a').count()
+        record(
+          `Overview Show all expands list at ${width}×${height}`,
+          expanded === blockCount,
+          `expanded=${expanded} block=${blockCount}`,
+        )
+      }
+    } else {
+      record(
+        `Overview mobile list shows all routes at ${width}×${height}`,
+        listCount > 0 && listCount === blockCount,
+        `list=${listCount} block=${blockCount}`,
+      )
+    }
   }
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
@@ -1211,6 +1243,125 @@ async function main() {
     )
     await page.keyboard.press('Escape')
     await page.waitForTimeout(200)
+
+    // Every guide step: primary + Back fully in viewport; spotlight not covered >30% by tip.
+    async function assertTourControlsInViewport(width, height) {
+      await page.setViewportSize({ width, height })
+      await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+      await ensureLoggedIn('Demo')
+      if (await page.locator('.demo-tour-tooltip, .demo-tour-menu').count()) {
+        await page.keyboard.press('Escape')
+        await page.waitForTimeout(200)
+      }
+      const guides = [
+        'Overview',
+        'Route check',
+        'Jobs',
+        'Alerts & history',
+        'Corridor monitor',
+        'Settings',
+        'Search & Switch user',
+        'Data partners',
+      ]
+      const fails = []
+      for (const guide of guides) {
+        await startGuideSection(guide)
+        const tip = page.locator('.demo-tour-tooltip')
+        for (let step = 0; step < 28; step++) {
+          await tip.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+          if (!(await tip.count())) break
+          const title = ((await tip.locator('.demo-tour-title').textContent().catch(() => '')) || '').trim()
+          // Measure this step first — opening the full-size map auto-advances via present.
+          const measure = await page.evaluate(() => {
+            const tipEl = document.querySelector('.demo-tour-tooltip')
+            if (!tipEl) return { ok: false, reason: 'no-tip' }
+            const vw = window.innerWidth
+            const vh = window.innerHeight
+            const inView = (el) => {
+              if (!el) return false
+              const r = el.getBoundingClientRect()
+              if (r.width < 2 || r.height < 2) return false
+              if (r.top < -1 || r.left < -1 || r.bottom > vh + 1 || r.right > vw + 1) return false
+              const cx = r.left + r.width / 2
+              const cy = r.top + r.height / 2
+              const hit = document.elementFromPoint(cx, cy)
+              return Boolean(hit && (hit === el || el.contains(hit)))
+            }
+            const buttons = Array.from(tipEl.querySelectorAll('button'))
+            const primary = buttons.find(b => /Next|Done|Continue|Open full-size map|Close it and continue|Back to guides/i.test(b.textContent || ''))
+              || tipEl.querySelector('.demo-tour-btn.is-primary')
+            const back = buttons.find(b => /^\s*Back\s*$/i.test(b.textContent || ''))
+            const spot = document.querySelector('.demo-tour-spotlight')
+            let spotOk = true
+            let coverRatio = 0
+            if (spot) {
+              const s = spot.getBoundingClientRect()
+              const intersectsVp = !(s.bottom <= 0 || s.top >= vh || s.right <= 0 || s.left >= vw)
+              spotOk = intersectsVp && s.width >= 20 && s.height >= 20
+              if (intersectsVp) {
+                const t = tipEl.getBoundingClientRect()
+                const overlapW = Math.max(0, Math.min(s.right, t.right) - Math.max(s.left, t.left))
+                const overlapH = Math.max(0, Math.min(s.bottom, t.bottom) - Math.max(s.top, t.top))
+                const overlap = overlapW * overlapH
+                const area = Math.max(1, s.width * s.height)
+                coverRatio = overlap / area
+                if (coverRatio > 0.3) spotOk = false
+              }
+            }
+            return {
+              ok: inView(primary) && (!back || inView(back)) && spotOk,
+              primaryOk: inView(primary),
+              backOk: !back || inView(back),
+              spotOk,
+              coverRatio: Math.round(coverRatio * 100) / 100,
+              title: tipEl.querySelector('.demo-tour-title')?.textContent?.trim() || '',
+            }
+          })
+          if (!measure.ok) fails.push({ guide, ...measure })
+          const done = tip.getByRole('button', { name: 'Done' })
+          const backGuides = tip.getByRole('button', { name: 'Back to guides' })
+          if ((await done.count()) && (await backGuides.count())) {
+            await done.click({ timeout: 10000 }).catch(() => page.keyboard.press('Escape'))
+            break
+          }
+          const titleBefore = title
+          const primary = tip.locator('.demo-tour-btn.is-primary')
+          const doIt = tip.getByRole('button', { name: /Open full-size map|Save job for me|Show samples for me|Continue/i })
+          // Open full-size map so modes/minimise steps have anchors; then continue.
+          if (title === 'Full-size map') {
+            const openMap = tip.getByRole('button', { name: 'Open full-size map' })
+            if (await openMap.count()) await openMap.click({ timeout: 10000 }).catch(() => {})
+            else if (await primary.count()) await primary.click({ timeout: 10000 }).catch(() => {})
+          } else if (await doIt.count()) {
+            await doIt.first().click({ timeout: 10000 }).catch(() => {})
+          } else if (await primary.count()) {
+            await primary.click({ timeout: 10000 }).catch(() => {})
+          } else break
+          const advanced = await page.waitForFunction(prev => {
+            const t = document.querySelector('.demo-tour-tooltip .demo-tour-title')?.textContent?.trim() || ''
+            return !t || t !== prev
+          }, titleBefore, { timeout: 8000 }).then(() => true).catch(() => false)
+          if (!advanced) {
+            // Interactive wait stuck (e.g. live route check) — leave this guide.
+            await page.keyboard.press('Escape')
+            await page.waitForTimeout(200)
+            break
+          }
+          await page.waitForTimeout(200)
+        }
+        if (await page.locator('.demo-tour-tooltip, .demo-tour-menu').count()) {
+          await page.keyboard.press('Escape')
+          await page.waitForTimeout(150)
+        }
+      }
+      record(
+        `Demo tour controls in viewport at ${width}×${height} for every guide step`,
+        fails.length === 0,
+        JSON.stringify(fails.slice(0, 6)),
+      )
+    }
+    await assertTourControlsInViewport(375, 667)
+    await assertTourControlsInViewport(390, 844)
 
     // Overview steps (same anchors as full tour): each must get its own spotlight.
     await page.setViewportSize({ width: 1440, height: 900 })

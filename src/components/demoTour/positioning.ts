@@ -29,8 +29,16 @@ export const COMPACT_SHEET_H = 64
 export const TALL_VIEWPORT_RATIO = 0.6
 /** Spotlight shows at most this fraction of the viewport height for tall targets. */
 export const TALL_SPOT_VIEWPORT_RATIO = 0.4
-/** Mobile tip body scrolls inside this fraction of the viewport. */
-export const MOBILE_SHEET_MAX_VH = 0.45
+/**
+ * Mobile tip body scrolls inside this fraction of the viewport.
+ * Card itself is capped to the visible band (viewport − header − tab bar).
+ */
+export const MOBILE_SHEET_MAX_VH = 0.55
+/** Visible content band between header and mobile tab bar. */
+export const MOBILE_VISIBLE_BAND = {
+  header: HEADER_H,
+  tabBar: TAB_BAR_H,
+} as const
 
 export function prefersReducedMotion(): boolean {
   try {
@@ -226,10 +234,14 @@ export function placeTooltip(
   }
 
   if (isNarrowViewport(viewport.width)) {
-    const sheetH = opts.sheetHeight ?? tipH
+    const bandMax = Math.max(
+      160,
+      viewport.height - HEADER_H - TAB_BAR_H - PAD * 2,
+    )
+    const sheetH = Math.min(opts.sheetHeight ?? tipH, bandMax)
     const decisionH =
       opts.decisionSheetHeight ??
-      Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), 320))
+      Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), bandMax))
     const placement = opts.preferSheetTop
       ? ('sheet-top' as MobileSheetPlacement)
       : decideMobileSheetPlacement(target, viewport, {

@@ -5,14 +5,22 @@ import type { CheckHistoryRecord, MonitoringAlert } from '../context/RouteMonito
 import type { SavedJob } from './jobs.ts'
 import type { TestPermit } from './routeCheck.ts'
 import {
+  alertsForRoute,
+  attachOrphanChecksToJobs,
   buildOverviewRoutes,
+  buildRouteSummary,
   buildSummaryItems,
   countByStatus,
+  countRoutesWithoutGeometry,
   filterOverviewRoutes,
   filtersAreActive,
+  groupAlertsByStatus,
+  looksLikeCoordinates,
   overviewRouteIdForResult,
   parseOverviewFilters,
+  routeDisplayTitle,
   serializeOverviewFilters,
+  sortOverviewRoutes,
   sortSummaryBySeverity,
 } from './overviewRoutes.ts'
 
@@ -58,6 +66,19 @@ function check(partial: Partial<CheckHistoryRecord> & Pick<CheckHistoryRecord, '
     retrievedAt: partial.runAt,
     source: 'Autobahn GmbH',
     summary: 'ok',
+    ...partial,
+  }
+}
+
+function alert(partial: Partial<MonitoringAlert> & Pick<MonitoringAlert, 'id' | 'routeId' | 'severity'>): MonitoringAlert {
+  return {
+    time: '2026-11-22T18:00:00+01:00',
+    runAt: '2026-11-22T18:00:00+01:00',
+    routeLabel: 'Hamburg → Hannover',
+    change: `${partial.severity} change`,
+    detail: 'detail',
+    status: 'New',
+    source: 'Autobahn GmbH',
     ...partial,
   }
 }
@@ -138,6 +159,7 @@ test('buildOverviewRoutes merges jobs and orphan checks with latest status', () 
   assert.equal(jobRoute.addedAt, '2026-11-18T09:00:00+01:00')
   assert.ok(jobRoute.geometry && jobRoute.geometry.length >= 2)
   assert.equal(jobRoute.summaryItems[0]?.severity, 'HOLD')
+  assert.equal(jobRoute.title, 'Hamburg → Hannover')
 
   const orphan = routes.find(r => r.id === 'DE-ORPHAN-1')
   assert.ok(orphan)
@@ -145,6 +167,60 @@ test('buildOverviewRoutes merges jobs and orphan checks with latest status', () 
   assert.equal(orphan.status, 'READY')
   assert.equal(orphan.lastCheckedAt, '2026-11-22T09:00:00+01:00')
   assert.equal(orphan.addedAt, '2026-11-20T09:00:00+01:00')
+})
+
+test('buildOverviewRoutes attaches orphan checks to jobs by permitNumber', () => {
+  const jobs = [
+    job({
+      id: 'job-a',
+      name: 'HH night',
+      permitNumber: 'DE-HH-2026-01845',
+      lastVerdict: 'VERIFY',
+      lastCheckedAt: '2026-11-12T10:00:00+01:00',
+      plannedDeparture: '2026-11-25T22:00:00+01:00',
+    }),
+    job({
+      id: 'job-b',
+      name: 'HH day',
+      permitNumber: 'DE-HH-2026-01845',
+      lastVerdict: 'VERIFY',
+      lastCheckedAt: '2026-11-10T10:00:00+01:00',
+      plannedDeparture: '2026-11-26T08:00:00+01:00',
+      createdAt: '2026-11-19T10:00:00+01:00',
+    }),
+  ]
+  const history = [
+    check({
+      id: 'job-check',
+      jobId: 'job-a',
+      verdict: 'VERIFY',
+      runAt: '2026-11-12T10:00:00+01:00',
+      permitNumber: 'DE-HH-2026-01845',
+    }),
+    check({
+      id: 'orphan-hold',
+      verdict: 'HOLD',
+      runAt: '2026-11-22T18:00:00+01:00',
+      permitNumber: 'DE-HH-2026-01845',
+      routeLabel: 'Hamburg → Hannover',
+      summary: 'Full closure on A7',
+      confirmOnSite: ['Confirm barrier'],
+    }),
+  ]
+
+  const attached = attachOrphanChecksToJobs(jobs, history)
+  assert.equal(attached.remainingOrphans.length, 0)
+  assert.ok(attached.jobChecks.get('job-a')?.some(c => c.id === 'orphan-hold'))
+  assert.ok(!(attached.jobChecks.get('job-b') || []).some(c => c.id === 'orphan-hold'))
+
+  const routes = buildOverviewRoutes({ jobs, history, examplePermits: examples })
+  assert.equal(routes.length, 2)
+  assert.ok(!routes.some(r => r.source === 'check' && r.permitNumber === 'DE-HH-2026-01845'))
+  const jobA = routes.find(r => r.id === 'job-a')
+  assert.ok(jobA)
+  assert.equal(jobA.status, 'HOLD')
+  assert.equal(jobA.lastCheckedAt, '2026-11-22T18:00:00+01:00')
+  assert.ok(jobA.checkIds.includes('orphan-hold'))
 })
 
 test('buildOverviewRoutes falls back to examples only when account is empty', () => {
@@ -178,6 +254,7 @@ test('buildOverviewRoutes keys orphan checks by routeLabel when permitNumber mis
   assert.equal(routes.length, 1)
   assert.equal(routes[0].id, 'Leipzig → Nürnberg')
   assert.equal(routes[0].source, 'check')
+  assert.equal(routes[0].title, 'Leipzig → Nürnberg')
 })
 
 test('summary severity orders HOLD → VERIFY → READY', () => {
@@ -198,6 +275,138 @@ test('summary severity orders HOLD → VERIFY → READY', () => {
       { severity: 'VERIFY' as const },
     ]).map(i => i.severity),
     ['HOLD', 'VERIFY', 'READY'],
+  )
+})
+
+test('buildRouteSummary uses confirmOnSite and alerts when evidence is empty', () => {
+  const withConfirm = buildRouteSummary({
+    evidence: [],
+    confirmOnSite: ['Check bridge clearance', 'Confirm escort'],
+    verdict: 'HOLD',
+    summary: 'Blocking works',
+    alerts: [
+      alert({ id: 'a1', routeId: 'h1', severity: 'VERIFY', change: 'Lane narrows' }),
+      alert({ id: 'a2', routeId: 'h1', severity: 'HOLD', change: 'Full closure' }),
+    ],
+  })
+  assert.deepEqual(
+    withConfirm.items.map(i => [i.severity, i.label]),
+    [
+      ['HOLD', 'Check bridge clearance'],
+      ['HOLD', 'Confirm escort'],
+      ['HOLD', 'Full closure'],
+      ['VERIFY', 'Lane narrows'],
+    ],
+  )
+  assert.equal(withConfirm.fallback, null)
+
+  const fallback = buildRouteSummary({
+    evidence: [],
+    confirmOnSite: [],
+    verdict: 'VERIFY',
+    summary: 'Verify lane widths on site',
+    alerts: [],
+  })
+  assert.equal(fallback.items.length, 0)
+  assert.equal(fallback.fallback?.severity, 'VERIFY')
+  assert.equal(fallback.fallback?.label, 'Verify lane widths on site')
+
+  const capped = buildRouteSummary({
+    evidence: Array.from({ length: 8 }, (_, i) =>
+      evidence({ id: `e${i}`, state: i < 2 ? 'danger' : 'warning', title: `Item ${i}` }),
+    ),
+    verdict: 'HOLD',
+  })
+  assert.equal(capped.items.length, 7)
+  assert.equal(capped.items[6].label, '+2 more')
+})
+
+test('alertsForRoute matches check ids, job id, and routeLabel', () => {
+  const alerts = [
+    alert({ id: 'by-check', routeId: 'check-9', severity: 'HOLD' }),
+    alert({ id: 'by-job', routeId: 'job-1', jobId: 'job-1', severity: 'VERIFY' }),
+    alert({ id: 'by-label', routeId: 'other', routeLabel: 'Hof A9 → Bayreuth A9', severity: 'READY' }),
+    alert({ id: 'unrelated', routeId: 'nope', severity: 'HOLD' }),
+  ]
+  const matched = alertsForRoute(alerts, {
+    routeId: 'job-1',
+    jobId: 'job-1',
+    routeLabel: 'Hof A9 → Bayreuth A9',
+    checkIds: ['check-9', 'check-8'],
+  })
+  assert.deepEqual(matched.map(a => a.id).sort(), ['by-check', 'by-job', 'by-label'])
+})
+
+test('groupAlertsByStatus puts Resolved into READY and sorts newest first', () => {
+  const groups = groupAlertsByStatus([
+    alert({ id: 'old', routeId: 'r', severity: 'HOLD', runAt: '2026-11-20T10:00:00+01:00', time: '2026-11-20T10:00:00+01:00' }),
+    alert({ id: 'new', routeId: 'r', severity: 'HOLD', runAt: '2026-11-22T10:00:00+01:00', time: '2026-11-22T10:00:00+01:00' }),
+    alert({ id: 'done', routeId: 'r', severity: 'HOLD', status: 'Resolved', runAt: '2026-11-21T10:00:00+01:00', time: '2026-11-21T10:00:00+01:00' }),
+    alert({ id: 'v', routeId: 'r', severity: 'VERIFY', runAt: '2026-11-21T12:00:00+01:00', time: '2026-11-21T12:00:00+01:00' }),
+  ])
+  assert.deepEqual(groups.HOLD.map(a => a.id), ['new', 'old'])
+  assert.deepEqual(groups.VERIFY.map(a => a.id), ['v'])
+  assert.deepEqual(groups.READY.map(a => a.id), ['done'])
+})
+
+test('routeDisplayTitle falls back when ends look like coordinates', () => {
+  assert.equal(looksLikeCoordinates('53.5511, 9.9937'), true)
+  assert.equal(looksLikeCoordinates('Hamburg'), false)
+  assert.equal(
+    routeDisplayTitle({
+      origin: '53.5511, 9.9937',
+      destination: '52.3736, 9.7394',
+      jobName: 'Port night run',
+      corridor: 'A7',
+    }),
+    'Port night run',
+  )
+  assert.equal(
+    routeDisplayTitle({ origin: 'Hof A9', destination: 'Bayreuth A9' }),
+    'Hof A9 → Bayreuth A9',
+  )
+})
+
+test('sortOverviewRoutes orders by severity then departure then last checked', () => {
+  const routes = sortOverviewRoutes(
+    buildOverviewRoutes({
+      jobs: [
+        job({
+          id: 'ready-soon',
+          name: 'Ready soon',
+          lastVerdict: 'READY',
+          plannedDeparture: '2026-11-24T08:00:00+01:00',
+          lastCheckedAt: '2026-11-20T08:00:00+01:00',
+        }),
+        job({
+          id: 'hold-later',
+          name: 'Hold later',
+          lastVerdict: 'HOLD',
+          plannedDeparture: '2026-11-25T08:00:00+01:00',
+          lastCheckedAt: '2026-11-22T08:00:00+01:00',
+        }),
+        job({
+          id: 'hold-soon',
+          name: 'Hold soon',
+          lastVerdict: 'HOLD',
+          plannedDeparture: '2026-11-24T06:00:00+01:00',
+          lastCheckedAt: '2026-11-21T08:00:00+01:00',
+        }),
+        job({
+          id: 'verify',
+          name: 'Verify',
+          lastVerdict: 'VERIFY',
+          plannedDeparture: '2026-11-24T12:00:00+01:00',
+          lastCheckedAt: '2026-11-22T18:00:00+01:00',
+        }),
+      ],
+      history: [],
+      examplePermits: [],
+    }),
+  )
+  assert.deepEqual(
+    routes.map(r => r.id),
+    ['hold-soon', 'hold-later', 'verify', 'ready-soon'],
   )
 })
 
@@ -299,28 +508,56 @@ test('overviewRouteIdForResult prefers job id then permit then label', () => {
   assert.equal(overviewRouteIdForResult({ routeLabel: 'A → B' }), 'A → B')
 })
 
-test('buildOverviewRoutes attaches matching alerts', () => {
+test('buildOverviewRoutes attaches matching alerts via check id', () => {
   const alerts: MonitoringAlert[] = [
-    {
+    alert({
       id: 'a1',
-      time: '2026-11-22T18:00:00+01:00',
-      runAt: '2026-11-22T18:00:00+01:00',
-      routeId: 'job-1',
-      routeLabel: 'Hamburg → Hannover',
+      routeId: 'h-hold',
+      severity: 'HOLD',
       change: 'HOLD',
       detail: 'closure',
-      severity: 'HOLD',
-      status: 'New',
-      source: 'Autobahn GmbH',
+      jobId: undefined,
+    }),
+    alert({
+      id: 'a2',
+      routeId: 'job-1',
       jobId: 'job-1',
-    },
+      severity: 'VERIFY',
+    }),
   ]
   const routes = buildOverviewRoutes({
-    jobs: [job({ id: 'job-1', name: 'Night' })],
-    history: [],
+    jobs: [job({ id: 'job-1', name: 'Night', permitNumber: 'DE-HH-2026-01845' })],
+    history: [
+      check({
+        id: 'h-hold',
+        jobId: 'job-1',
+        verdict: 'HOLD',
+        runAt: '2026-11-22T18:00:00+01:00',
+        permitNumber: 'DE-HH-2026-01845',
+      }),
+    ],
     examplePermits: [],
     alerts,
   })
-  assert.equal(routes[0].alerts.length, 1)
-  assert.equal(routes[0].alerts[0].id, 'a1')
+  assert.equal(routes[0].alerts.length, 2)
+  assert.deepEqual(routes[0].alerts.map(a => a.id).sort(), ['a1', 'a2'])
+})
+
+test('countRoutesWithoutGeometry reports missing tracks', () => {
+  const routes = buildOverviewRoutes({
+    jobs: [job({ id: 'with-geom', name: 'Has track' })],
+    history: [
+      check({
+        id: 'no-geom',
+        verdict: 'VERIFY',
+        runAt: '2026-11-22T10:00:00+01:00',
+        permitNumber: 'DE-NO-GEOM',
+        routeLabel: 'Leipzig → Nürnberg',
+      }),
+    ],
+    examplePermits: [],
+  })
+  const { missing, total } = countRoutesWithoutGeometry(routes)
+  assert.equal(total, 2)
+  assert.equal(missing, 1)
 })

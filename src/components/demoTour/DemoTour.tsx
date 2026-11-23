@@ -43,6 +43,7 @@ import {
   isUsableSpotlightRect,
   measureTooltipSize,
   MOBILE_SHEET_MAX_VH,
+  MOBILE_VISIBLE_BAND,
   placeTooltip,
   prefersReducedMotion,
   readVerdictFromDom,
@@ -112,7 +113,37 @@ export default function DemoTour() {
   const currentStep =
     mode.kind === 'tour' ? mode.steps[mode.index] ?? null : null
 
+  const closeOverviewFullMap = useCallback(() => {
+    try {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('map') !== 'full') return
+      params.delete('map')
+      params.delete('route')
+      const next = params.toString()
+      navigate({ pathname: location.pathname, search: next ? `?${next}` : '' }, { replace: true })
+    } catch {
+      // ignore
+    }
+  }, [location.pathname, navigate])
+
+  const openOverviewFullMap = useCallback(() => {
+    try {
+      if (document.querySelector('[data-tour="overview-fullmap"]')) return
+      const openBtn = document.querySelector<HTMLElement>('[data-tour="overview-fullmap-open"]')
+      if (openBtn) {
+        openBtn.click()
+        return
+      }
+      const params = new URLSearchParams(window.location.search)
+      params.set('map', 'full')
+      navigate({ pathname: '/', search: `?${params.toString()}` }, { replace: true })
+    } catch {
+      // ignore
+    }
+  }, [navigate])
+
   const closeTour = useCallback((opts?: { focusLauncher?: boolean }) => {
+    closeOverviewFullMap()
     setMode({ kind: 'idle' })
     setAnchorEl(null)
     setSpot(null)
@@ -121,7 +152,7 @@ export default function DemoTour() {
     if (opts?.focusLauncher !== false) {
       queueMicrotask(() => launcherRef.current?.focus())
     }
-  }, [])
+  }, [closeOverviewFullMap])
 
   const persist = useCallback((next: DemoTourProgress) => {
     writeTourProgress(next)
@@ -248,6 +279,7 @@ export default function DemoTour() {
       openMenu()
       return
     }
+    closeOverviewFullMap()
     const section = currentStep.section
     const next = markSectionComplete(section)
     if (mode.full && isFullTourDone(next)) {
@@ -260,22 +292,24 @@ export default function DemoTour() {
     setSetupFallback(null)
     waitingRef.current = false
     openMenu(nextIncompleteFlowId(next))
-  }, [currentStep, mode, openMenu, persist])
+  }, [closeOverviewFullMap, currentStep, mode, openMenu, persist])
 
   const returnToGuides = useCallback(() => {
+    closeOverviewFullMap()
     setAnchorEl(null)
     setSpot(null)
     setSetupFallback(null)
     waitingRef.current = false
     const stored = readTourProgress()
     openMenu(nextIncompleteFlowId(stored))
-  }, [openMenu])
+  }, [closeOverviewFullMap, openMenu])
 
   const goToIndex = useCallback(
     (nextIndex: number) => {
       const current = modeRef.current
       if (current.kind !== 'tour') return
       if (nextIndex < 0) return
+      const fromStep = current.steps[current.index]
       markSectionsLeaving(current.steps, current.index, nextIndex)
       if (nextIndex >= current.steps.length) {
         const section = current.steps[current.index]?.section
@@ -295,6 +329,27 @@ export default function DemoTour() {
         return
       }
       const step = current.steps[nextIndex]
+      const fullmapSteps = new Set([
+        'overview-fullmap',
+        'overview-fullmap-modes',
+        'overview-fullmap-minimise',
+      ])
+      // Keep full-size map open for modes/minimise; close when leaving that trio.
+      if (fullmapSteps.has(step.id) && step.id !== 'overview-fullmap') {
+        openOverviewFullMap()
+      } else if (
+        fromStep &&
+        fullmapSteps.has(fromStep.id) &&
+        !fullmapSteps.has(step.id)
+      ) {
+        closeOverviewFullMap()
+      } else if (
+        fromStep?.id === 'overview-fullmap-minimise' ||
+        (fromStep?.id === 'overview-fullmap-modes' && step.id === 'overview-fullmap')
+      ) {
+        if (step.id === 'overview-fullmap') closeOverviewFullMap()
+      }
+
       if (step.route && location.pathname !== step.route) {
         navigate(step.route)
       }
@@ -305,7 +360,15 @@ export default function DemoTour() {
       setSetupFallback(null)
       setMode({ ...current, index: nextIndex })
     },
-    [closeTour, location.pathname, markSectionsLeaving, navigate, persist],
+    [
+      closeOverviewFullMap,
+      closeTour,
+      location.pathname,
+      markSectionsLeaving,
+      navigate,
+      openOverviewFullMap,
+      persist,
+    ],
   )
 
   const goNext = useCallback(() => {
@@ -391,6 +454,16 @@ export default function DemoTour() {
       if (step.route && location.pathname !== step.route) {
         navigate(step.route)
         await new Promise(r => setTimeout(r, 80))
+      }
+      // Full-size map steps 7–8 need the overlay open for their anchors.
+      if (
+        step.id === 'overview-fullmap-modes' ||
+        step.id === 'overview-fullmap-minimise'
+      ) {
+        if (!document.querySelector('[data-tour="overview-fullmap"]')) {
+          openOverviewFullMap()
+          await waitForSelector('[data-tour="overview-fullmap"]', { timeoutMs: 2500 })
+        }
       }
       // Interactive "show samples": if list already open, treat as done.
       if (step.id === 'route-show-samples' && document.querySelector('[data-tour="route-permit-hamburg-hannover"]')) {
@@ -481,16 +554,22 @@ export default function DemoTour() {
           setSpot(null)
           setTipPos(placeTooltip(null, tipSize, viewport))
         } else {
+          const bandMax = Math.max(
+            160,
+            viewport.height - MOBILE_VISIBLE_BAND.header - MOBILE_VISIBLE_BAND.tabBar - 20,
+          )
           const decisionSheetHeight = narrow
-            ? Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), 320))
+            ? Math.max(sheetH, Math.min(Math.floor(viewport.height * MOBILE_SHEET_MAX_VH), bandMax))
             : sheetH
           const placed = placeTooltip(rect, tipSize, viewport, {
             sheetHeight: sheetH,
             decisionSheetHeight,
           })
+          // Truncate using the larger height so the spotlight never sits under the tip.
+          const truncateH = Math.max(sheetH, decisionSheetHeight)
           const spotRect =
             narrow && (placed.placement === 'sheet' || placed.placement === 'sheet-top')
-              ? truncateSpotlightToVisibleBand(rect, viewport, placed.placement, decisionSheetHeight)
+              ? truncateSpotlightToVisibleBand(rect, viewport, placed.placement, truncateH)
               : rect
           setSpot(isUsableSpotlightRect(spotRect) ? spotRect : rect)
           setTipPos(placed)
@@ -700,6 +779,10 @@ export default function DemoTour() {
       if (!document.querySelector('[data-tour="route-permit-hamburg-hannover"]')) {
         clickSelector('[data-tour="route-sample-toggle"]')
       }
+    }
+    if (currentStep.id === 'overview-fullmap') {
+      openOverviewFullMap()
+      return
     }
     const selector = currentStep.doItSelector || currentStep.anchor
     if (!selector) return

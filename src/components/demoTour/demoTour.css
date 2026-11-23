@@ -65,7 +65,9 @@
   pointer-events: auto;
   width: min(360px, calc(100vw - 24px));
   max-height: min(70vh, 480px);
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 16px 16px 14px;
   border-radius: 14px;
   border: var(--hairline);
@@ -81,7 +83,8 @@
   width: auto !important;
   bottom: calc(56px + var(--safe-area-inset-bottom, 0px)) !important;
   top: auto !important;
-  max-height: min(36vh, 280px);
+  /* Visible band: viewport − header 56 − tab bar 56 − safe-area. */
+  max-height: calc(100vh - 56px - 56px - var(--safe-area-inset-bottom, 0px) - 16px);
   padding: 12px 14px 10px;
 }
 
@@ -91,15 +94,27 @@
   width: auto !important;
   top: calc(56px + 8px) !important;
   bottom: auto !important;
-  max-height: min(36vh, 280px);
+  max-height: calc(100vh - 56px - 56px - var(--safe-area-inset-bottom, 0px) - 24px);
   padding: 12px 14px 10px;
 }
 
-/* Compact one-line sheets were removed — keep body + controls, scroll if needed. */
+/* Body scrolls; title + footer (Back/Next, All guides/Skip/Exit) stay in the band. */
+.demo-tour-tooltip .demo-tour-eyebrow,
+.demo-tour-tooltip .demo-tour-title {
+  flex: 0 0 auto;
+}
+.demo-tour-tooltip .demo-tour-body {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
 .demo-tour-tooltip.is-sheet .demo-tour-body,
 .demo-tour-tooltip.is-sheet-top .demo-tour-body {
-  max-height: 45vh;
-  overflow-y: auto;
+  max-height: none;
+}
+.demo-tour-tooltip .demo-tour-actions,
+.demo-tour-tooltip .demo-tour-meta-row {
+  flex: 0 0 auto;
 }
 
 .demo-tour-tooltip.is-yielding {
