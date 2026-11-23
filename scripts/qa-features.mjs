@@ -580,6 +580,18 @@ async function main() {
   // Redesigned Overview: workflow strip, Check new route, filters, route block, full-size map.
   await page.getByRole('heading', { name: 'Overview', exact: true }).waitFor({ timeout: 15000 })
   record('Overview page has accessible h1', await page.getByRole('heading', { name: 'Overview', exact: true }).isVisible())
+
+  // Round-5: overlapping tracks paint READY → VERIFY → HOLD, selected on top
+  const mapDrawSrc = readFileSync('src/components/OverviewRoutesMap.tsx', 'utf8')
+  const trackOrderSrc = readFileSync('src/lib/overviewTracks.ts', 'utf8')
+  record(
+    'Overview map sorts tracks by severity then selected (HOLD above VERIFY)',
+    mapDrawSrc.includes('compareTracksForMapDrawOrder')
+      && /READY:\s*0/.test(trackOrderSrc)
+      && /VERIFY:\s*1/.test(trackOrderSrc)
+      && /HOLD:\s*2/.test(trackOrderSrc)
+      && trackOrderSrc.includes('compareTracksForMapDrawOrder'),
+  )
   record(
     'Overview keeps the 3-step workflow strip',
     await page.locator('.transport-workflow[data-tour="overview-workflow"]').isVisible(),
@@ -889,6 +901,55 @@ async function main() {
       !overflow.docOverflow && overflow.scrollWidth <= overflow.clientWidth + 1,
       JSON.stringify(overflow),
     )
+
+    // Round-5: ≤600px list rows stack status pill under subtitle (title ≥240px at 375)
+    if (width <= 600) {
+      const listRowLayout = await page.evaluate(() => {
+        const row = document.querySelector('[data-tour="overview-route-list"] button, [data-tour="overview-route-list"] a')
+        const title = row?.querySelector('.overview-route-title')
+        const subtitle = row?.querySelector('.overview-route-subtitle')
+        const pill = row?.querySelector('[data-testid="overview-status-pill"]')
+        if (!row || !title || !subtitle || !pill) return null
+        const tr = title.getBoundingClientRect()
+        const sr = subtitle.getBoundingClientRect()
+        const pr = pill.getBoundingClientRect()
+        return {
+          titleWidth: tr.width,
+          pillBelowSubtitle: pr.top >= sr.bottom - 2,
+          pillLeftNearTitle: Math.abs(pr.left - tr.left) <= 6,
+        }
+      })
+      record(
+        `Upcoming list stacks status pill under subtitle at ${width}×${height}`,
+        Boolean(
+          listRowLayout
+          && listRowLayout.pillBelowSubtitle
+          && listRowLayout.pillLeftNearTitle
+          && (width > 375 || listRowLayout.titleWidth >= 240),
+        ),
+        JSON.stringify(listRowLayout),
+      )
+
+      const cardTitleWidth = await page.evaluate(() => {
+        const card = document.querySelector('[data-tour="overview-route-cards"] .overview-route-card-main')
+        const title = card?.querySelector('.overview-route-title')
+        const pill = card?.querySelector('[data-testid="overview-status-pill"]')
+        if (!card || !title || !pill) return null
+        const tr = title.getBoundingClientRect()
+        const pr = pill.getBoundingClientRect()
+        return {
+          titleWidth: tr.width,
+          pillBelowTitle: pr.top >= tr.bottom - 2,
+        }
+      })
+      if (cardTitleWidth && (cardTitleWidth.titleWidth < 200 || width <= 600)) {
+        record(
+          `Inline route card stacks status pill when narrow at ${width}×${height}`,
+          Boolean(cardTitleWidth.pillBelowTitle && cardTitleWidth.titleWidth >= 200),
+          JSON.stringify(cardTitleWidth),
+        )
+      }
+    }
     const listCount = await page.locator('[data-tour="overview-route-list"] button, [data-tour="overview-route-list"] a').count()
     const blockCount = await page.locator('[data-tour="overview-route-cards"] .overview-route-card').count()
     const showAll = page.getByTestId('overview-show-all-list')

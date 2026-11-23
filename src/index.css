@@ -6460,6 +6460,36 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
 .overview-status-pill.sample { background: var(--blue-bg); color: var(--blue-text); }
 .overview-status-pill svg { flex: none; color: inherit; }
 
+/* ≤600px: status pill under subtitle so the title uses the full row width. */
+@media (max-width: 600px) {
+  .overview-upcoming-list > button {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr) 16px;
+    grid-template-areas:
+      "icon copy chevron"
+      ". pill chevron";
+    column-gap: 9px;
+    row-gap: 6px;
+    align-items: start;
+  }
+  .overview-upcoming-list > button > .transport-list-icon {
+    grid-area: icon;
+    align-self: start;
+  }
+  .overview-upcoming-list > button > .overview-route-card-copy {
+    grid-area: copy;
+    min-width: 0;
+  }
+  .overview-upcoming-list > button > .overview-status-pill {
+    grid-area: pill;
+    justify-self: start;
+  }
+  .overview-upcoming-list > button > svg {
+    grid-area: chevron;
+    align-self: center;
+  }
+}
+
 .overview-empty-filter {
   padding: 24px 16px;
   display: flex;
@@ -6811,6 +6841,30 @@ h1, .app-page h1, .market-page-header h1, .route-header h1, .live-map-title h1 {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+/* After base card/fullmap grids so ≤600px stacking wins the cascade. */
+@media (max-width: 600px) {
+  .overview-route-card-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .overview-route-card-main > .overview-status-pill {
+    justify-self: start;
+  }
+  .overview-fullmap-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .overview-fullmap-card > .overview-status-pill {
+    justify-self: start;
+  }
+  .overview-fullmap-single-heading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .overview-fullmap-single-heading > .overview-status-pill {
+    justify-self: start;
+  }
 }
 .overview-fullmap-picker {
   display: flex;

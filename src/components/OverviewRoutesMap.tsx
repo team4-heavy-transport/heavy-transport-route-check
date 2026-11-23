@@ -4,7 +4,11 @@ import 'leaflet/dist/leaflet.css'
 import { Route } from 'lucide-react'
 import { ROUTE_FIT_MAX_ZOOM } from '../lib/mapBounds'
 import { downsampleTrack, loadGpxTrack, parseGpxTrack, type LatLng } from '../lib/gpxTrack'
-import { VERDICT_TRACK_COLORS, type OverviewVerdict } from '../lib/overviewTracks'
+import {
+  compareTracksForMapDrawOrder,
+  VERDICT_TRACK_COLORS,
+  type OverviewVerdict,
+} from '../lib/overviewTracks'
 import { countRoutesWithoutGeometry, type OverviewRoute } from '../lib/overviewRoutes'
 
 export type OverviewMapTrack = {
@@ -166,8 +170,12 @@ export default function OverviewRoutesMap({
       group.clearLayers()
       const allPoints: LatLng[] = []
       const highlightId = focusRef.current || selectedRef.current
+      // READY → VERIFY → HOLD, then selected on top (Leaflet paints later layers above).
+      const paintOrder = [...loaded].sort((a, b) =>
+        compareTracksForMapDrawOrder(a, b, highlightId),
+      )
 
-      loaded.forEach(track => {
+      paintOrder.forEach(track => {
         const color = trackColor(track.status)
         const highlighted = track.id === highlightId
         const weight = highlighted ? 6 : 5

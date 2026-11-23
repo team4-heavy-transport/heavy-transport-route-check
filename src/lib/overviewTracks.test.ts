@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { downsampleTrack, parseGpxTrack } from './gpxTrack.ts'
 import {
+  compareTracksForMapDrawOrder,
   OVERVIEW_FEATURED_COPY,
   OVERVIEW_FEATURED_PERMIT_ID,
   OVERVIEW_MONITOR_ROUTES,
@@ -86,6 +87,28 @@ test('overview line colours match the Ready / Verify / Hold legend', () => {
   assert.equal(VERDICT_TRACK_COLORS.VERIFY, '#F59E0B')
   assert.equal(VERDICT_TRACK_COLORS.HOLD, '#DC2626')
   assert.equal(SAMPLE_ROUTE_COLOR, '#0b57d0')
+})
+
+test('map draw order paints READY then VERIFY then HOLD, selected last', () => {
+  const tracks = [
+    { id: 'hold', status: 'HOLD' as const },
+    { id: 'ready', status: 'READY' as const },
+    { id: 'verify-a', status: 'VERIFY' as const },
+    { id: 'verify-b', status: 'VERIFY' as const },
+  ]
+  const bySeverity = [...tracks].sort((a, b) => compareTracksForMapDrawOrder(a, b, null))
+  assert.deepEqual(
+    bySeverity.map(t => t.id),
+    ['ready', 'verify-a', 'verify-b', 'hold'],
+  )
+  const selectedHold = [...tracks].sort((a, b) => compareTracksForMapDrawOrder(a, b, 'hold'))
+  assert.equal(selectedHold[selectedHold.length - 1].id, 'hold')
+  const selectedReady = [...tracks].sort((a, b) => compareTracksForMapDrawOrder(a, b, 'ready'))
+  assert.equal(selectedReady[selectedReady.length - 1].id, 'ready')
+  assert.deepEqual(
+    selectedReady.slice(0, -1).map(t => t.status),
+    ['VERIFY', 'VERIFY', 'HOLD'],
+  )
 })
 
 test('featured hero transport config stays available for demo helpers', () => {
