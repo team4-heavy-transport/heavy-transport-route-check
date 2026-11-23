@@ -43,15 +43,19 @@ import { sampleTestPermits } from '../lib/routeCheck'
 const MOBILE_LIST_CAP = 5
 
 const verdictMeta = {
-  READY: { label: 'Ready', icon: CheckCircle2, iconClass: 'green', badgeClass: 'ready' },
-  HOLD: { label: 'Hold departure', icon: CircleX, iconClass: 'red', badgeClass: 'hold' },
-  VERIFY: { label: 'Verify evidence', icon: AlertTriangle, iconClass: 'amber', badgeClass: 'verify' },
+  READY: { label: 'Ready', icon: CheckCircle2, iconClass: 'green', badgeClass: 'ready', statusClass: 'is-status-ready' },
+  HOLD: { label: 'Hold departure', icon: CircleX, iconClass: 'red', badgeClass: 'hold', statusClass: 'is-status-hold' },
+  VERIFY: { label: 'Verify evidence', icon: AlertTriangle, iconClass: 'amber', badgeClass: 'verify', statusClass: 'is-status-verify' },
 } as const
+
+function statusClassName(status: OverviewRoute['status']): string {
+  return status ? verdictMeta[status].statusClass : ''
+}
 
 function StatusPill({ status }: { status: OverviewRoute['status'] }) {
   if (!status) {
     return (
-      <b className="overview-status-pill sample">
+      <b className="overview-status-pill sample" data-testid="overview-status-pill" data-status="none">
         Unchecked
       </b>
     )
@@ -59,9 +63,33 @@ function StatusPill({ status }: { status: OverviewRoute['status'] }) {
   const meta = verdictMeta[status]
   const Icon = meta.icon
   return (
-    <b className={`overview-status-pill ${meta.badgeClass}`}>
+    <b
+      className={`overview-status-pill ${meta.badgeClass}`}
+      data-testid="overview-status-pill"
+      data-status={meta.badgeClass}
+    >
       <Icon size={14} aria-hidden /> {meta.label}
     </b>
+  )
+}
+
+function RouteTitleBlock({
+  title,
+  subtitle,
+  example,
+}: {
+  title: string
+  subtitle: string
+  example?: boolean
+}) {
+  return (
+    <div className="overview-route-card-copy">
+      <strong className="overview-route-title">
+        {title}
+        {example ? <em className="overview-example-tag"> Example</em> : null}
+      </strong>
+      <span className="overview-route-subtitle overview-route-card-meta">{subtitle}</span>
+    </div>
   )
 }
 
@@ -224,17 +252,22 @@ function RouteCard({
   onSelect: () => void
 }) {
   const panelId = useId()
+  const statusCls = statusClassName(route.status)
   return (
     <article
-      className={`overview-route-card${selected ? ' is-selected' : ''}${route.source === 'example' ? ' is-example' : ''}`}
+      className={`overview-route-card${selected ? ' is-selected' : ''}${route.source === 'example' ? ' is-example' : ''}${statusCls ? ` ${statusCls}` : ''}`}
       data-route-id={route.id}
+      data-status={route.status ? verdictMeta[route.status].badgeClass : 'none'}
       data-testid={`overview-route-card-${route.id}`}
     >
-      <button type="button" className="overview-route-card-main" onClick={onSelect}>
-        <div className="overview-route-card-copy">
-          <strong>{route.title}</strong>
-          <span className="overview-route-card-meta">{routeMetaLine(route)}</span>
-        </div>
+      <button
+        type="button"
+        className="overview-route-card-main"
+        onClick={onSelect}
+        aria-pressed={selected}
+        aria-current={selected ? 'true' : undefined}
+      >
+        <RouteTitleBlock title={route.title} subtitle={routeMetaLine(route)} />
         <StatusPill status={route.status} />
       </button>
       <button
@@ -475,20 +508,24 @@ function FullSizeMapDialog({
       {mode === 'all' ? (
         <div className="overview-fullmap-all">
           <div className="overview-fullmap-cards" data-tour="overview-fullmap-cards">
-            {routes.map(route => (
-              <button
-                key={route.id}
-                type="button"
-                className={`overview-fullmap-card${route.id === selectedId ? ' is-selected' : ''}`}
-                onClick={() => onSelect(route.id)}
-              >
-                <span className="overview-route-card-copy">
-                  <strong>{route.title}</strong>
-                  <span className="overview-route-card-meta">{routeMetaLine(route)}</span>
-                </span>
-                <StatusPill status={route.status} />
-              </button>
-            ))}
+            {routes.map(route => {
+              const statusCls = statusClassName(route.status)
+              const selected = route.id === selectedId
+              return (
+                <button
+                  key={route.id}
+                  type="button"
+                  className={`overview-fullmap-card${selected ? ' is-selected' : ''}${statusCls ? ` ${statusCls}` : ''}`}
+                  data-status={route.status ? verdictMeta[route.status].badgeClass : 'none'}
+                  aria-pressed={selected}
+                  aria-current={selected ? 'true' : undefined}
+                  onClick={() => onSelect(route.id)}
+                >
+                  <RouteTitleBlock title={route.title} subtitle={routeMetaLine(route)} />
+                  <StatusPill status={route.status} />
+                </button>
+              )
+            })}
           </div>
           <OverviewRoutesMap
             routes={routes}
@@ -502,7 +539,20 @@ function FullSizeMapDialog({
         </div>
       ) : selected ? (
         <div className="overview-fullmap-single" data-tour="overview-fullmap-single">
-          <aside className="overview-fullmap-single-panel">
+          <aside
+            className={[
+              'overview-fullmap-single-panel',
+              statusClassName(selected.status),
+            ].filter(Boolean).join(' ')}
+            data-status={selected.status ? verdictMeta[selected.status].badgeClass : 'none'}
+          >
+            <div className="overview-fullmap-single-heading">
+              <RouteTitleBlock
+                title={selected.title}
+                subtitle={routeMetaLine(selected)}
+              />
+              <StatusPill status={selected.status} />
+            </div>
             <label className="overview-fullmap-picker">
               <span>Route</span>
               <select
@@ -742,28 +792,34 @@ export default function MarketplaceOverview() {
         ) : (
           <>
             <div className="transport-route-list overview-upcoming-list" data-tour="overview-route-list">
-              {listRoutes.map(route => (
-                <button
-                  type="button"
-                  key={`list-${route.id}`}
-                  data-route-id={route.id}
-                  className={route.id === selectedId ? 'is-selected' : undefined}
-                  onClick={() => selectRoute(route.id, { scrollToCard: true })}
-                >
-                  <span className={`transport-list-icon ${route.status ? verdictMeta[route.status].iconClass : 'blue'}`}>
-                    <Route size={16} aria-hidden />
-                  </span>
-                  <div>
-                    <strong>
-                      {route.title}
-                      {route.source === 'example' ? <em className="overview-example-tag"> Example</em> : null}
-                    </strong>
-                    <span>{routeMetaLine(route)}</span>
-                  </div>
-                  <StatusPill status={route.status} />
-                  <ArrowRight size={16} aria-hidden />
-                </button>
-              ))}
+              {listRoutes.map(route => {
+                const selected = route.id === selectedId
+                const meta = route.status ? verdictMeta[route.status] : null
+                const StatusIcon = meta?.icon || Route
+                return (
+                  <button
+                    type="button"
+                    key={`list-${route.id}`}
+                    data-route-id={route.id}
+                    data-status={meta?.badgeClass || 'none'}
+                    className={selected ? 'is-selected' : undefined}
+                    aria-pressed={selected}
+                    aria-current={selected ? 'true' : undefined}
+                    onClick={() => selectRoute(route.id, { scrollToCard: true })}
+                  >
+                    <span className={`transport-list-icon ${meta?.iconClass || 'blue'}`}>
+                      <StatusIcon size={16} aria-hidden />
+                    </span>
+                    <RouteTitleBlock
+                      title={route.title}
+                      subtitle={routeMetaLine(route)}
+                      example={route.source === 'example'}
+                    />
+                    <StatusPill status={route.status} />
+                    <ArrowRight size={16} aria-hidden />
+                  </button>
+                )
+              })}
             </div>
             {listHasMore ? (
               <button

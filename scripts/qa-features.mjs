@@ -662,6 +662,134 @@ async function main() {
   })
   record('Minimise returns focus to Full-size map button', focusBack)
 
+  // Status colours, title/subtitle stacking, selection ≠ status border
+  const secondCard = page.locator('[data-tour="overview-route-cards"] .overview-route-card .overview-route-card-main').nth(1)
+  if (await secondCard.count()) {
+    await secondCard.click()
+    await page.waitForTimeout(150)
+  }
+  const statusColourAudit = await page.evaluate(() => {
+    const parseRgb = (value) => {
+      const m = String(value || '').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i)
+      if (!m) return null
+      return [Number(m[1]), Number(m[2]), Number(m[3])]
+    }
+    const hexToRgb = (hex) => {
+      const m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim())
+      if (!m) return null
+      const n = parseInt(m[1], 16)
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+    }
+    const near = (a, b, tol = 12) => {
+      if (!a || !b) return false
+      return Math.abs(a[0] - b[0]) <= tol && Math.abs(a[1] - b[1]) <= tol && Math.abs(a[2] - b[2]) <= tol
+    }
+    const isNearWhiteOrBlack = (rgb) => {
+      if (!rgb) return true
+      const [r, g, b] = rgb
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const nearWhite = r > 230 && g > 230 && b > 230
+      const nearBlack = r < 30 && g < 30 && b < 30
+      const nearGray = max - min < 18
+      return nearWhite || nearBlack || nearGray
+    }
+    const key = (rgb) => (rgb ? rgb.join(',') : 'null')
+    const byStatus = {}
+    for (const status of ['ready', 'verify', 'hold']) {
+      const pill = document.querySelector(
+        `[data-tour="overview-route-cards"] .overview-route-card[data-status="${status}"] [data-testid="overview-status-pill"]`,
+      )
+      if (!pill) continue
+      const color = getComputedStyle(pill).color
+      byStatus[status] = { color, rgb: parseRgb(color) }
+    }
+    const colours = Object.values(byStatus).map((entry) => key(entry.rgb))
+    const distinct = new Set(colours).size
+    const notDefault = Object.values(byStatus).every((entry) => !isNearWhiteOrBlack(entry.rgb))
+
+    const card = document.querySelector('[data-tour="overview-route-cards"] .overview-route-card')
+    let titleSubtitleOffset = null
+    if (card) {
+      const title = card.querySelector('.overview-route-title')
+      const subtitle = card.querySelector('.overview-route-subtitle')
+      if (title && subtitle) {
+        const t = title.getBoundingClientRect()
+        const s = subtitle.getBoundingClientRect()
+        titleSubtitleOffset = { titleTop: t.top, subtitleTop: s.top, delta: s.top - t.top }
+      }
+    }
+
+    const selected = document.querySelector('[data-tour="overview-route-cards"] .overview-route-card.is-selected')
+    let selectionBorder = null
+    if (selected) {
+      const style = getComputedStyle(selected)
+      const root = getComputedStyle(document.documentElement)
+      const probe = document.createElement('span')
+      document.body.appendChild(probe)
+      probe.style.color = 'var(--accent)'
+      const accentRgb = parseRgb(getComputedStyle(probe).color)
+      const statusRgb = ['--status-ready-border', '--status-verify-border', '--status-hold-border'].map((name) => {
+        const raw = root.getPropertyValue(name).trim()
+        probe.style.color = raw
+        return parseRgb(getComputedStyle(probe).color) || hexToRgb(raw)
+      })
+      probe.remove()
+      const borderRgb = parseRgb(style.borderTopColor)
+      const outlineRgb = parseRgb(style.outlineColor)
+      const matchesStatus = statusRgb.some((rgb) => near(borderRgb, rgb) || near(outlineRgb, rgb))
+      selectionBorder = {
+        borderTopColor: style.borderTopColor,
+        outlineColor: style.outlineColor,
+        outlineWidth: style.outlineWidth,
+        accentRgb,
+        borderMatchesAccent: near(borderRgb, accentRgb),
+        outlineMatchesAccent: near(outlineRgb, accentRgb),
+        matchesStatusColour: matchesStatus,
+        hasSelectionOutline: Number.parseFloat(style.outlineWidth) >= 1.5,
+        ariaPressed: selected.querySelector('.overview-route-card-main')?.getAttribute('aria-pressed') === 'true',
+      }
+    }
+
+    return {
+      byStatus,
+      distinct,
+      notDefault,
+      statusCount: Object.keys(byStatus).length,
+      titleSubtitleOffset,
+      selectionBorder,
+    }
+  })
+  record(
+    'Overview card status label colours differ per status',
+    statusColourAudit.statusCount >= 2 && statusColourAudit.distinct === statusColourAudit.statusCount,
+    JSON.stringify({ distinct: statusColourAudit.distinct, byStatus: statusColourAudit.byStatus }),
+  )
+  record(
+    'Overview card status labels are not white/black text-default',
+    statusColourAudit.statusCount >= 1 && statusColourAudit.notDefault,
+    JSON.stringify(statusColourAudit.byStatus),
+  )
+  record(
+    'Overview card title and subtitle have different top offsets',
+    Boolean(
+      statusColourAudit.titleSubtitleOffset
+      && statusColourAudit.titleSubtitleOffset.delta >= 4,
+    ),
+    JSON.stringify(statusColourAudit.titleSubtitleOffset),
+  )
+  record(
+    'Selected Overview card border colour ≠ status colours',
+    Boolean(
+      statusColourAudit.selectionBorder
+      && statusColourAudit.selectionBorder.hasSelectionOutline
+      && !statusColourAudit.selectionBorder.borderMatchesAccent
+      && !statusColourAudit.selectionBorder.matchesStatusColour
+      && statusColourAudit.selectionBorder.ariaPressed,
+    ),
+    JSON.stringify(statusColourAudit.selectionBorder),
+  )
+
   for (const [width, height] of [[375, 667], [390, 844]]) {
     await page.setViewportSize({ width, height })
     await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
