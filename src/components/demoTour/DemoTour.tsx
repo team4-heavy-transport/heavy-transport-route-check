@@ -8,21 +8,28 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { BookOpen } from 'lucide-react'
+import { BookOpen, Check } from 'lucide-react'
 import {
   TOUR_SECTIONS,
   TOUR_STEPS,
   acknowledgeWelcome,
   dismissWelcome,
+  flowAccessibleName,
+  isFlowDone,
+  isFullTourDone,
   markSectionComplete,
+  nextIncompleteFlowId,
   readTourProgress,
   resetTourProgress,
   sectionLabel,
   sectionsCompletedByAdvance,
   stepsForSection,
+  tourFlowEntries,
   writeTourProgress,
   type DemoTourProgress,
+  type TourFlowId,
   type TourSectionId,
+  type TourSetupFallback,
   type TourStepDef,
 } from '../../lib/demoTour'
 import {
@@ -56,6 +63,7 @@ function stepsForFullTour(): TourStepDef[] {
 }
 
 const SHEET_FALLBACK_H = 280
+const FLOW_ENTRIES = tourFlowEntries()
 
 export default function DemoTour() {
   const navigate = useNavigate()
@@ -64,8 +72,10 @@ export default function DemoTour() {
   const tooltipRef = useRef<HTMLDivElement>(null)
   const welcomeRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuItemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const titleId = useId()
   const bodyId = useId()
+  const menuTitleId = useId()
   const [progress, setProgress] = useState<DemoTourProgress>(() => readTourProgress())
   const [mode, setMode] = useState<Mode>({ kind: 'idle' })
   const [anchorEl, setAnchorEl] = useState<Element | null>(null)
@@ -77,9 +87,11 @@ export default function DemoTour() {
   })
   const [liveMessage, setLiveMessage] = useState('')
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 60, left: 16 })
+  const [menuFocusId, setMenuFocusId] = useState<TourFlowId>('full')
   const [guideSlot, setGuideSlot] = useState<Element | null>(null)
   const [appDialogOpen, setAppDialogOpen] = useState(false)
   const [dynamicBody, setDynamicBody] = useState<string | null>(null)
+  const [setupFallback, setSetupFallback] = useState<TourSetupFallback | null>(null)
   const waitingRef = useRef(false)
   const skipGuardRef = useRef<string | null>(null)
   const panelSeenOpenRef = useRef(false)
@@ -106,6 +118,7 @@ export default function DemoTour() {
     setMode({ kind: 'idle' })
     setAnchorEl(null)
     setSpot(null)
+    setSetupFallback(null)
     waitingRef.current = false
     if (opts?.focusLauncher !== false) {
       queueMicrotask(() => launcherRef.current?.focus())
@@ -130,13 +143,31 @@ export default function DemoTour() {
     [persist],
   )
 
+  const openMenu = useCallback((focusId?: TourFlowId) => {
+    const btn = launcherRef.current
+    const narrow = isNarrowViewport()
+    if (btn && !narrow) {
+      const rect = btn.getBoundingClientRect()
+      const width = 360
+      const left = Math.min(
+        Math.max(12, rect.right - width),
+        window.innerWidth - width - 12,
+      )
+      setMenuPos({ top: rect.bottom + 8, left })
+    }
+    setMenuFocusId(focusId ?? 'full')
+    setMode({ kind: 'menu' })
+  }, [])
+
   const startSteps = useCallback(
-    (steps: TourStepDef[], full: boolean) => {
+    (steps: TourStepDef[], full: boolean, announce?: string) => {
       if (!steps.length) return
       const first = steps[0]
       if (first.route && location.pathname !== first.route) {
         navigate(first.route)
       }
+      if (announce) setLiveMessage(announce)
+      setSetupFallback(null)
       setMode({ kind: 'tour', steps, index: 0, full })
     },
     [location.pathname, navigate],
@@ -145,19 +176,44 @@ export default function DemoTour() {
   const startFullTour = useCallback(() => {
     const next = acknowledgeWelcome()
     persist(next)
-    startSteps(stepsForFullTour(), true)
+    const entry = FLOW_ENTRIES[0]
+    startSteps(
+      stepsForFullTour(),
+      true,
+      `Guide started: ${entry.label}, ${entry.stepCount} steps`,
+    )
   }, [persist, startSteps])
 
   const startSection = useCallback(
     (section: TourSectionId) => {
       const steps = stepsForSection(section)
       const meta = TOUR_SECTIONS.find(item => item.id === section)
+      const entry = FLOW_ENTRIES.find(item => item.id === section)
       if (meta && location.pathname !== meta.route) {
         navigate(meta.route)
       }
-      startSteps(steps, false)
+      const next = acknowledgeWelcome()
+      persist(next)
+      startSteps(
+        steps,
+        false,
+        entry
+          ? `Guide started: ${entry.label}, ${entry.stepCount} steps`
+          : undefined,
+      )
     },
-    [location.pathname, navigate, startSteps],
+    [location.pathname, navigate, persist, startSteps],
+  )
+
+  const startFlow = useCallback(
+    (flowId: TourFlowId) => {
+      if (flowId === 'full') {
+        startFullTour()
+        return
+      }
+      startSection(flowId)
+    },
+    [startFullTour, startSection],
   )
 
   const finishCurrentGuide = useCallback(() => {
@@ -168,8 +224,7 @@ export default function DemoTour() {
     const section = currentStep.section
     const next = markSectionComplete(section)
     if (mode.full) {
-      const remaining = TOUR_SECTIONS.filter(s => !next.completedSections.includes(s.id))
-      if (remaining.length === 0) {
+      if (isFullTourDone(next)) {
         persist({ ...next, tourDismissed: true, welcomeSeen: true })
       } else {
         persist(next)
@@ -179,6 +234,34 @@ export default function DemoTour() {
     }
     closeTour()
   }, [closeTour, currentStep, mode, persist])
+
+  const backToGuides = useCallback(() => {
+    if (mode.kind !== 'tour' || !currentStep) {
+      openMenu()
+      return
+    }
+    const section = currentStep.section
+    const next = markSectionComplete(section)
+    if (mode.full && isFullTourDone(next)) {
+      persist({ ...next, tourDismissed: true, welcomeSeen: true })
+    } else {
+      persist(next)
+    }
+    setAnchorEl(null)
+    setSpot(null)
+    setSetupFallback(null)
+    waitingRef.current = false
+    openMenu(nextIncompleteFlowId(next))
+  }, [currentStep, mode, openMenu, persist])
+
+  const returnToGuides = useCallback(() => {
+    setAnchorEl(null)
+    setSpot(null)
+    setSetupFallback(null)
+    waitingRef.current = false
+    const stored = readTourProgress()
+    openMenu(nextIncompleteFlowId(stored))
+  }, [openMenu])
 
   const goToIndex = useCallback(
     (nextIndex: number) => {
@@ -191,9 +274,8 @@ export default function DemoTour() {
         if (section) {
           const next = markSectionComplete(section)
           if (current.full) {
-            const remaining = TOUR_SECTIONS.filter(s => !next.completedSections.includes(s.id))
             persist(
-              remaining.length === 0
+              isFullTourDone(next)
                 ? { ...next, tourDismissed: true, welcomeSeen: true }
                 : next,
             )
@@ -209,6 +291,7 @@ export default function DemoTour() {
         navigate(step.route)
       }
       waitingRef.current = false
+      setSetupFallback(null)
       setMode({ ...current, index: nextIndex })
     },
     [closeTour, location.pathname, markSectionsLeaving, navigate, persist],
@@ -249,6 +332,10 @@ export default function DemoTour() {
       setDynamicBody(null)
       return
     }
+    if (setupFallback) {
+      setDynamicBody(setupFallback.body)
+      return
+    }
     if (currentStep.id === 'route-cta') {
       setDynamicBody(verdictCtaBody(readVerdictFromDom()))
       return
@@ -269,13 +356,14 @@ export default function DemoTour() {
       return
     }
     setDynamicBody(null)
-  }, [mode, currentStep, appDialogOpen])
+  }, [mode, currentStep, appDialogOpen, setupFallback])
 
   // Resolve anchor for current step.
   useEffect(() => {
     if (mode.kind !== 'tour' || !currentStep) {
       setAnchorEl(null)
       setSpot(null)
+      setSetupFallback(null)
       return
     }
 
@@ -307,14 +395,21 @@ export default function DemoTour() {
         if (!cancelled) {
           setAnchorEl(null)
           setSpot(null)
+          setSetupFallback(null)
         }
         return
       }
       const found = await waitForSelector(step.anchor, {
-        timeoutMs: step.optional ? 1800 : 4500,
+        timeoutMs: step.optional || step.setupFallback ? 1800 : 4500,
       })
       if (cancelled) return
       if (!found) {
+        if (step.setupFallback) {
+          setAnchorEl(null)
+          setSpot(null)
+          setSetupFallback(step.setupFallback)
+          return
+        }
         if (step.optional && skipGuardRef.current !== step.id) {
           skipGuardRef.current = step.id
           goToIndex(stepIndex + 1)
@@ -322,9 +417,11 @@ export default function DemoTour() {
         }
         setAnchorEl(null)
         setSpot(null)
+        setSetupFallback(null)
         return
       }
       skipGuardRef.current = null
+      setSetupFallback(null)
 
       const tipEl = tooltipRef.current
       const tipRect = tipEl && isNarrowViewport() ? tipEl.getBoundingClientRect() : null
@@ -408,11 +505,13 @@ export default function DemoTour() {
     }
   }, [anchorEl, mode, currentStep?.id, tipPos.placement])
 
-  // Focus tooltip when step changes (yield while app dialog owns focus).
+  // Focus tooltip / welcome / menu when mode changes.
   useEffect(() => {
     if (mode.kind === 'tour' && currentStep) {
       const label = sectionLabel(currentStep.section)
-      const body = dynamicBody ?? currentStep.body
+      const body =
+        dynamicBody ??
+        (isNarrowViewport() && currentStep.bodyNarrow ? currentStep.bodyNarrow : currentStep.body)
       setLiveMessage(`${currentStep.title}. ${body} Step ${mode.index + 1} of ${mode.steps.length}. ${label}.`)
       if (!appDialogOpen) {
         queueMicrotask(() => tooltipRef.current?.focus())
@@ -420,13 +519,17 @@ export default function DemoTour() {
     } else if (mode.kind === 'welcome') {
       queueMicrotask(() => welcomeRef.current?.focus())
     } else if (mode.kind === 'menu') {
-      queueMicrotask(() => menuRef.current?.focus())
+      queueMicrotask(() => {
+        const idx = FLOW_ENTRIES.findIndex(entry => entry.id === menuFocusId)
+        const target = menuItemRefs.current[idx >= 0 ? idx : 0]
+        ;(target ?? menuRef.current)?.focus()
+      })
     }
-  }, [mode, currentStep, dynamicBody, appDialogOpen])
+  }, [mode, currentStep, dynamicBody, appDialogOpen, menuFocusId])
 
   // Interactive advance watchers.
   useEffect(() => {
-    if (mode.kind !== 'tour' || !currentStep) return
+    if (mode.kind !== 'tour' || !currentStep || setupFallback) return
     const advance = currentStep.advance
     // READY verdict CTA: treat as plain next (no dialog to wait for).
     if (
@@ -480,7 +583,7 @@ export default function DemoTour() {
         goNext()
       }
     }
-  }, [mode, currentStep, goNext, location.pathname])
+  }, [mode, currentStep, goNext, location.pathname, setupFallback])
 
   // Auto-advance when the user closes the verdict panel themselves.
   useEffect(() => {
@@ -519,12 +622,50 @@ export default function DemoTour() {
         closeTour()
         return
       }
+      if (mode.kind === 'menu') {
+        const focusables = menuItemRefs.current.filter(Boolean) as HTMLButtonElement[]
+        if (!focusables.length) return
+        const currentIdx = focusables.findIndex(el => el === document.activeElement)
+        if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          const next = currentIdx < 0 ? 0 : (currentIdx + 1) % focusables.length
+          focusables[next]?.focus()
+          return
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          const next = currentIdx < 0 ? 0 : (currentIdx - 1 + focusables.length) % focusables.length
+          focusables[next]?.focus()
+          return
+        }
+        if (event.key === 'Tab') {
+          const container = menuRef.current
+          if (!container) return
+          const tabbables = Array.from(
+            container.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+            ),
+          ).filter(el => !el.hasAttribute('disabled') && el.tabIndex !== -1)
+          if (!tabbables.length) return
+          const first = tabbables[0]
+          const last = tabbables[tabbables.length - 1]
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault()
+            last.focus()
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault()
+            first.focus()
+          }
+          return
+        }
+        return
+      }
       if (mode.kind !== 'tour' || appDialogOpen) return
       if (event.key === 'ArrowRight') {
         event.preventDefault()
         const step = currentStep
         const readyCta = step?.id === 'route-cta' && readVerdictFromDom() === 'READY'
-        if (!step?.advance || step.advance.type === 'next' || readyCta) goNext()
+        if (!step?.advance || step.advance.type === 'next' || readyCta || setupFallback) goNext()
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault()
         goBack()
@@ -532,7 +673,7 @@ export default function DemoTour() {
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [mode, currentStep, closeTour, goBack, goNext, persist, appDialogOpen])
+  }, [mode, currentStep, closeTour, goBack, goNext, persist, appDialogOpen, setupFallback])
 
   const onDoItForMe = () => {
     if (!currentStep) return
@@ -561,20 +702,6 @@ export default function DemoTour() {
     // Auto-advance watcher fires once the dialog leaves the DOM.
   }
 
-  const openMenu = () => {
-    const btn = launcherRef.current
-    if (btn) {
-      const rect = btn.getBoundingClientRect()
-      const width = 320
-      const left = Math.min(
-        Math.max(12, rect.right - width),
-        window.innerWidth - width - 12,
-      )
-      setMenuPos({ top: rect.bottom + 8, left })
-    }
-    setMode({ kind: 'menu' })
-  }
-
   const launcher = (
     <button
       ref={launcherRef}
@@ -600,12 +727,20 @@ export default function DemoTour() {
     : null
   const showDoIt =
     Boolean(currentStep?.doItLabel) &&
+    !setupFallback &&
     !(currentStep?.id === 'route-cta' && verdict === 'READY')
   const readyCtaNext =
     currentStep?.id === 'route-cta' && verdict === 'READY'
   const waitingAdvance =
-    Boolean(currentStep?.advance && currentStep.advance.type !== 'next') && !readyCtaNext
-  const tipBody = dynamicBody ?? currentStep?.body ?? ''
+    Boolean(currentStep?.advance && currentStep.advance.type !== 'next') &&
+    !readyCtaNext &&
+    !setupFallback
+  const tipBody =
+    dynamicBody ??
+    (currentStep && isNarrowViewport() && currentStep.bodyNarrow
+      ? currentStep.bodyNarrow
+      : currentStep?.body) ??
+    ''
   const yieldToDialog = appDialogOpen && currentStep?.id === 'route-cta-panel'
   const sheetPlacement = tipPos.placement
   const isSheetBottom =
@@ -614,13 +749,25 @@ export default function DemoTour() {
     sheetPlacement === 'sheet-top' || sheetPlacement === 'sheet-compact-top'
   const isSheetCompact =
     sheetPlacement === 'sheet-compact' || sheetPlacement === 'sheet-compact-top'
-  const primaryLabel =
+  const isLastStep =
     mode.kind === 'tour' && mode.index >= mode.steps.length - 1
+  const primaryLabel = isLastStep
+    ? mode.full
       ? 'Finish'
-      : waitingAdvance
-        ? 'Continue'
-        : 'Next'
-
+      : 'Done'
+    : waitingAdvance
+      ? 'Continue'
+      : 'Next'
+  const stepMeta =
+    mode.kind === 'tour' && currentStep
+      ? mode.full
+        ? `Step ${mode.index + 1} of ${mode.steps.length}${
+            sectionTotal > 0
+              ? ` · ${sectionLabel(currentStep.section)} ${sectionIndex}/${sectionTotal}`
+              : ''
+          }`
+        : `Step ${mode.index + 1} of ${mode.steps.length} · ${sectionLabel(currentStep.section)}`
+      : ''
   // Entire tour chrome portals to body so z-index vars apply (not under main/map stacking).
   return createPortal(
     <div className="demo-tour-root" data-demo-tour-root="">
@@ -653,15 +800,25 @@ export default function DemoTour() {
             </h2>
             <p id={bodyId} className="demo-tour-body">
               This app checks whether a permitted heavy-transport route is usable against live Autobahn conditions.
-              The guide covers Overview, a full Route check, Jobs, Alerts, Corridor monitor, Settings, and Switch user — Demo account only.
+              Choose the full walkthrough or a shorter guide — Demo account only.
             </p>
-            <div className="demo-tour-actions">
+            <div className="demo-tour-actions demo-tour-welcome-actions">
               <button type="button" className="demo-tour-btn is-ghost" onClick={() => { persist(dismissWelcome()); closeTour() }}>
                 Not now
               </button>
               <span className="demo-tour-actions-spacer" />
+              <button
+                type="button"
+                className="demo-tour-btn"
+                onClick={() => {
+                  persist(acknowledgeWelcome())
+                  openMenu()
+                }}
+              >
+                Choose a guide
+              </button>
               <button type="button" className="demo-tour-btn is-primary" onClick={startFullTour}>
-                Start the tour
+                Start the full tour
               </button>
             </div>
           </div>
@@ -670,26 +827,53 @@ export default function DemoTour() {
 
       {mode.kind === 'menu' && (
         <>
-          <button type="button" className="demo-tour-menu-backdrop" aria-label="Close guide menu" onClick={() => setMode({ kind: 'idle' })} />
+          <button
+            type="button"
+            className="demo-tour-menu-backdrop"
+            aria-label="Close guides"
+            onClick={() => {
+              setMode({ kind: 'idle' })
+              launcherRef.current?.focus()
+            }}
+          />
           <div
             ref={menuRef}
             className="demo-tour-menu"
             role="dialog"
-            aria-label="Guide menu"
+            aria-modal="true"
+            aria-labelledby={menuTitleId}
             tabIndex={-1}
-            style={{ top: menuPos.top, left: menuPos.left }}
+            style={isNarrowViewport() ? undefined : { top: menuPos.top, left: menuPos.left }}
           >
-            <h2 className="demo-tour-menu-title">Guides</h2>
-            <ul className="demo-tour-menu-list">
-              {TOUR_SECTIONS.map(section => {
-                const done = progress.completedSections.includes(section.id)
+            <span className="demo-tour-eyebrow">Demo guide</span>
+            <h2 id={menuTitleId} className="demo-tour-menu-title">Guides</h2>
+            <ul className="demo-tour-menu-list" role="list">
+              {FLOW_ENTRIES.map((entry, index) => {
+                const done = isFlowDone(entry.id, progress)
+                const primary = entry.id === 'full'
                 return (
-                  <li key={section.id}>
-                    <button type="button" className="demo-tour-menu-item" onClick={() => startSection(section.id)}>
-                      {section.label}
-                      <span className={`demo-tour-menu-status${done ? ' is-done' : ''}`}>
-                        {done ? 'Done' : 'Not started'}
+                  <li key={entry.id}>
+                    <button
+                      ref={el => { menuItemRefs.current[index] = el }}
+                      type="button"
+                      className={`demo-tour-menu-item${primary ? ' is-primary-flow' : ''}${done ? ' is-done' : ''}`}
+                      aria-label={flowAccessibleName(entry, done)}
+                      onClick={() => startFlow(entry.id)}
+                    >
+                      <span className="demo-tour-menu-item-copy">
+                        <span className="demo-tour-menu-item-name">{entry.label}</span>
+                        <span className="demo-tour-menu-item-desc">{entry.description}</span>
+                        <span className="demo-tour-menu-item-meta">
+                          {entry.stepCount} step{entry.stepCount === 1 ? '' : 's'}
+                        </span>
                       </span>
+                      {done && (
+                        <span className="demo-tour-menu-done" aria-hidden="true">
+                          <Check size={16} strokeWidth={2.25} />
+                          <span className="demo-tour-sr-only">Done</span>
+                        </span>
+                      )}
+                      <span className="demo-tour-sr-only">{done ? 'Done' : ''}</span>
                     </button>
                   </li>
                 )
@@ -698,14 +882,12 @@ export default function DemoTour() {
             <div className="demo-tour-menu-footer">
               <button
                 type="button"
-                className="demo-tour-btn"
-                style={{ width: '100%' }}
+                className="demo-tour-text-link demo-tour-menu-reset"
                 onClick={() => {
                   persist(resetTourProgress())
-                  startFullTour()
                 }}
               >
-                Restart full tour
+                Reset progress
               </button>
             </div>
           </div>
@@ -808,11 +990,11 @@ export default function DemoTour() {
                 <h2 id={titleId} className="demo-tour-title">{currentStep.title}</h2>
                 <p id={bodyId} className="demo-tour-body">{tipBody}</p>
                 <div className="demo-tour-meta-row">
-                  <p className="demo-tour-meta">
-                    Step {mode.index + 1} of {mode.steps.length}
-                    {sectionTotal > 0 ? ` · ${sectionLabel(currentStep.section)} ${sectionIndex}/${sectionTotal}` : ''}
-                  </p>
+                  <p className="demo-tour-meta">{stepMeta}</p>
                   <div className="demo-tour-text-links">
+                    <button type="button" className="demo-tour-text-link" onClick={() => returnToGuides()}>
+                      All guides
+                    </button>
                     <button type="button" className="demo-tour-text-link" onClick={() => finishCurrentGuide()}>
                       Skip guide
                     </button>
@@ -821,7 +1003,21 @@ export default function DemoTour() {
                     </button>
                   </div>
                 </div>
-                {yieldToDialog ? (
+                {setupFallback ? (
+                  <div className="demo-tour-actions">
+                    <button type="button" className="demo-tour-btn" onClick={() => returnToGuides()}>
+                      Back to guides
+                    </button>
+                    <span className="demo-tour-actions-spacer" />
+                    <button
+                      type="button"
+                      className="demo-tour-btn is-primary"
+                      onClick={() => startSection(setupFallback.ctaSection)}
+                    >
+                      {setupFallback.ctaLabel}
+                    </button>
+                  </div>
+                ) : yieldToDialog ? (
                   <div className="demo-tour-actions">
                     <button type="button" className="demo-tour-btn" onClick={goBack} disabled={mode.index === 0}>
                       Back
@@ -841,6 +1037,11 @@ export default function DemoTour() {
                       Back
                     </button>
                     <span className="demo-tour-actions-spacer" />
+                    {isLastStep && (
+                      <button type="button" className="demo-tour-btn" onClick={() => backToGuides()}>
+                        Back to guides
+                      </button>
+                    )}
                     {showDoIt && (
                       <button type="button" className="demo-tour-btn" onClick={onDoItForMe}>
                         {currentStep.doItLabel}

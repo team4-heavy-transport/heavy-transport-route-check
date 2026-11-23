@@ -411,19 +411,131 @@ export function scrollTargetIntoView(
   }
 }
 
-/** Poll / MutationObserver until selector matches or timeout. */
+/** Snapshot used by the pure visible-anchor picker (unit-testable with fake rects). */
+export type VisibleAnchorCandidate = {
+  rect: Rect
+  /** From getComputedStyle(el).display */
+  display?: string
+  /** From getComputedStyle(el).visibility */
+  visibility?: string
+  /** True when the element or an ancestor is inert / [hidden]. */
+  inertOrHidden?: boolean
+}
+
+/** True when rect has size and overlaps the viewport (edges touching count as no overlap). */
+export function rectIntersectsViewport(
+  rect: Rect,
+  viewport: { width: number; height: number },
+): boolean {
+  if (!(rect.width > 0 && rect.height > 0)) return false
+  return rectsIntersect(rect, {
+    top: 0,
+    left: 0,
+    width: viewport.width,
+    height: viewport.height,
+  })
+}
+
+/**
+ * Pure visibility gate for tour anchors. Prefer this over querySelector so
+ * off-screen / inert drawer duplicates (e.g. sidebar Switch user) lose to the
+ * on-screen header chip.
+ */
+export function isVisibleAnchorCandidate(
+  candidate: VisibleAnchorCandidate,
+  viewport: { width: number; height: number },
+): boolean {
+  if (candidate.inertOrHidden) return false
+  if (candidate.display === 'none') return false
+  if (candidate.visibility === 'hidden' || candidate.visibility === 'collapse') return false
+  return rectIntersectsViewport(candidate.rect, viewport)
+}
+
+/** First candidate that passes {@link isVisibleAnchorCandidate}, else null. */
+export function pickFirstVisibleAnchor<T extends VisibleAnchorCandidate>(
+  candidates: readonly T[],
+  viewport: { width: number; height: number },
+): T | null {
+  for (const c of candidates) {
+    if (isVisibleAnchorCandidate(c, viewport)) return c
+  }
+  return null
+}
+
+function hasInertOrHiddenAncestor(el: Element): boolean {
+  let node: Element | null = el
+  while (node) {
+    if (node.hasAttribute('hidden')) return true
+    if (node.hasAttribute('inert')) return true
+    if (node instanceof HTMLElement && node.inert) return true
+    node = node.parentElement
+  }
+  return false
+}
+
+function viewportSize(): { width: number; height: number } {
+  return {
+    width: typeof window !== 'undefined' ? window.innerWidth : 0,
+    height: typeof window !== 'undefined' ? window.innerHeight : 0,
+  }
+}
+
+/** Live DOM check: non-zero rect, style ok, not inert/hidden, intersects viewport. */
+export function isElementVisibleAnchor(
+  el: Element,
+  viewport: { width: number; height: number } = viewportSize(),
+): boolean {
+  if (hasInertOrHiddenAncestor(el)) return false
+  let display: string | undefined
+  let visibility: string | undefined
+  try {
+    const style = getComputedStyle(el)
+    display = style.display
+    visibility = style.visibility
+  } catch {
+    // Non-DOM / test stubs without getComputedStyle.
+  }
+  const box = el.getBoundingClientRect()
+  return isVisibleAnchorCandidate(
+    {
+      rect: { top: box.top, left: box.left, width: box.width, height: box.height },
+      display,
+      visibility,
+    },
+    viewport,
+  )
+}
+
+/** querySelectorAll + first visible match (DOM order). */
+export function queryVisibleSelector(
+  selector: string,
+  opts: {
+    root?: ParentNode
+    viewport?: { width: number; height: number }
+  } = {},
+): Element | null {
+  const root = opts.root ?? document
+  const viewport = opts.viewport ?? viewportSize()
+  const matches = root.querySelectorAll(selector)
+  for (const el of matches) {
+    if (isElementVisibleAnchor(el, viewport)) return el
+  }
+  return null
+}
+
+/** Poll / MutationObserver until a *visible* selector match appears or timeout. */
 export function waitForSelector(
   selector: string,
   opts: { timeoutMs?: number; root?: ParentNode } = {},
 ): Promise<Element | null> {
   const { timeoutMs = 4000, root = document } = opts
-  const existing = root.querySelector(selector)
+  const existing = queryVisibleSelector(selector, { root })
   if (existing) return Promise.resolve(existing)
 
   return new Promise(resolve => {
     const started = Date.now()
-    const observer = new MutationObserver(() => {
-      const found = root.querySelector(selector)
+    const check = () => {
+      const found = queryVisibleSelector(selector, { root })
       if (found) {
         cleanup()
         resolve(found)
@@ -431,17 +543,9 @@ export function waitForSelector(
         cleanup()
         resolve(null)
       }
-    })
-    const timer = window.setInterval(() => {
-      const found = root.querySelector(selector)
-      if (found) {
-        cleanup()
-        resolve(found)
-      } else if (Date.now() - started >= timeoutMs) {
-        cleanup()
-        resolve(null)
-      }
-    }, 120)
+    }
+    const observer = new MutationObserver(check)
+    const timer = window.setInterval(check, 120)
     const cleanup = () => {
       observer.disconnect()
       window.clearInterval(timer)
@@ -451,7 +555,7 @@ export function waitForSelector(
 }
 
 export function clickSelector(selector: string): boolean {
-  const el = document.querySelector(selector)
+  const el = queryVisibleSelector(selector)
   if (!el) return false
   if (el instanceof HTMLElement) {
     el.click()

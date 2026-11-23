@@ -309,10 +309,11 @@ async function main() {
   }
   const welcomeBackdrop = page.locator('.demo-tour-welcome-backdrop')
   await welcomeBackdrop.waitFor({ state: 'visible', timeout: 20000 })
-  const startTourBtn = page.getByRole('button', { name: 'Start the tour' })
+  const startTourBtn = page.getByRole('button', { name: 'Start the full tour' })
+  const chooseGuideBtn = page.getByRole('button', { name: 'Choose a guide' })
   record(
-    'Fresh Demo shows tour welcome with Start the tour',
-    (await welcomeBackdrop.isVisible()) && (await startTourBtn.isVisible()),
+    'Fresh Demo shows tour welcome with Start the full tour and Choose a guide',
+    (await welcomeBackdrop.isVisible()) && (await startTourBtn.isVisible()) && (await chooseGuideBtn.isVisible()),
   )
   await page.getByRole('button', { name: 'Not now' }).click()
   await welcomeBackdrop.waitFor({ state: 'detached', timeout: 10000 }).catch(() => {})
@@ -861,8 +862,8 @@ async function main() {
     await page.getByRole('heading', { name: 'Corridor monitor' }).waitFor({ timeout: 20000 })
     await page.locator('[data-testid="corridor-map"]').waitFor({ timeout: 25000 })
     await page.getByRole('button', { name: 'Guide' }).click()
-    await page.getByRole('dialog', { name: 'Guide menu' }).waitFor({ timeout: 10000 })
-    await page.getByRole('button', { name: 'Corridor monitor' }).click()
+    await page.getByRole('dialog', { name: 'Guides' }).waitFor({ timeout: 10000 })
+    await page.getByRole('button', { name: /^Corridor monitor\b/ }).click()
     for (let i = 0; i < corridorTourTitles.length; i++) {
       const title = corridorTourTitles[i]
       const tip = page.locator('.demo-tour-tooltip')
@@ -896,7 +897,7 @@ async function main() {
       if (i < corridorTourTitles.length - 1) {
         await primary.click({ timeout: 10000 })
       } else {
-        await tip.getByRole('button', { name: 'Finish' }).click({ timeout: 10000 })
+        await tip.getByRole('button', { name: 'Done' }).click({ timeout: 10000 })
       }
     }
   }
@@ -934,10 +935,9 @@ async function main() {
 
   async function startGuideSection(sectionLabel) {
     await page.getByRole('button', { name: 'Guide' }).click()
-    const menu = page.getByRole('dialog', { name: 'Guide menu' })
+    const menu = page.getByRole('dialog', { name: 'Guides' })
     await menu.waitFor({ timeout: 10000 })
-    // Menu items append "Not started"/"Done" — scope to the dialog so we never
-    // hit the sidebar wordmark ("Heavy transport route check").
+    // Accessible names include step counts ("Jobs, 4 steps") — scope to the dialog.
     await menu.getByRole('button', { name: new RegExp(`^${sectionLabel}\\b`) }).click()
     await page.locator('.demo-tour-tooltip').waitFor({ state: 'visible', timeout: 20000 })
   }
@@ -946,7 +946,7 @@ async function main() {
     const tip = page.locator('.demo-tour-tooltip')
     if (!(await tip.count())) return 'gone'
     const titleBefore = ((await tip.locator('.demo-tour-title').textContent()) || '').trim()
-    const finish = tip.getByRole('button', { name: 'Finish' })
+    const finish = tip.getByRole('button', { name: /^(Finish|Done)$/ })
     if (await finish.count()) {
       await finish.click({ timeout: 10000 })
       return 'finish'
@@ -971,7 +971,7 @@ async function main() {
     const primary = tip.locator('.demo-tour-btn.is-primary')
     const label = ((await primary.textContent()) || '').trim()
     await primary.click({ timeout: 10000 })
-    return /^Finish$/i.test(label) ? 'finish' : 'next'
+    return /^(Finish|Done)$/i.test(label) ? 'finish' : 'next'
   }
 
   async function assertMobileTourSpotClearsTip(sectionLabel, maxSteps = 20) {
@@ -1072,6 +1072,162 @@ async function main() {
       await page.waitForTimeout(200)
     }
     await assertMobileTourSpotClearsTip(section)
+  }
+
+  // --- Demo flow picker + Switch user visible-anchor ---
+  {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    if (await page.locator('.demo-tour-tooltip').count()) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+    }
+    // Reset picker progress so Done marks are deterministic for this check.
+    await page.evaluate(key => {
+      try {
+        localStorage.setItem(key, JSON.stringify({
+          welcomeSeen: true,
+          completedSections: [],
+          tourDismissed: true,
+        }))
+      } catch {}
+    }, DEMO_TOUR_STORAGE_KEY)
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+
+    await page.getByRole('button', { name: 'Guide' }).click()
+    const picker = page.getByRole('dialog', { name: 'Guides' })
+    await picker.waitFor({ timeout: 10000 })
+    const pickerEntries = picker.locator('.demo-tour-menu-item')
+    const entryCount = await pickerEntries.count()
+    const entryMeta = await pickerEntries.evaluateAll(els => els.map(el => ({
+      label: el.getAttribute('aria-label') || '',
+      steps: (el.querySelector('.demo-tour-menu-item-meta')?.textContent || '').trim(),
+      name: (el.querySelector('.demo-tour-menu-item-name')?.textContent || '').trim(),
+    })))
+    record(
+      'Demo guide picker lists 9 entries with step counts',
+      entryCount === 9
+        && entryMeta[0]?.name === 'Full tour'
+        && entryMeta.every(e => /\d+\s+steps?/.test(e.steps) && /\d+\s+steps?/.test(e.label)),
+      JSON.stringify(entryMeta.map(e => ({ name: e.name, steps: e.steps }))),
+    )
+
+    await picker.getByRole('button', { name: /^Jobs\b/ }).click()
+    const jobsTip = page.locator('.demo-tour-tooltip')
+    await jobsTip.waitFor({ state: 'visible', timeout: 20000 })
+    const jobsMeta = ((await jobsTip.locator('.demo-tour-meta').textContent()) || '').trim()
+    record(
+      'Demo Jobs guide shows Step 1 of N · Jobs',
+      /^Step 1 of \d+ · Jobs$/.test(jobsMeta),
+      jobsMeta,
+    )
+    await jobsTip.getByRole('button', { name: 'Exit' }).click({ timeout: 10000 }).catch(async () => {
+      await page.keyboard.press('Escape')
+    })
+    await page.waitForTimeout(200)
+
+    // Settings is short and always completable — finish via Back to guides.
+    await page.getByRole('button', { name: 'Guide' }).click()
+    await picker.waitFor({ timeout: 10000 })
+    await picker.getByRole('button', { name: /^Settings\b/ }).click()
+    const settingsTip = page.locator('.demo-tour-tooltip')
+    await settingsTip.waitFor({ state: 'visible', timeout: 20000 })
+    for (let i = 0; i < 6; i++) {
+      if (!(await settingsTip.count())) break
+      const backGuides = settingsTip.getByRole('button', { name: 'Back to guides' })
+      if (await backGuides.count()) break
+      const primary = settingsTip.locator('.demo-tour-btn.is-primary')
+      if (await primary.count()) {
+        await primary.click({ timeout: 10000 }).catch(() => {})
+        await page.waitForTimeout(350)
+      } else {
+        break
+      }
+    }
+    const backToGuides = settingsTip.getByRole('button', { name: 'Back to guides' })
+    record(
+      'Demo single-flow end shows Back to guides',
+      (await backToGuides.count()) > 0,
+    )
+    if (await backToGuides.count()) {
+      await backToGuides.click({ timeout: 10000 })
+    }
+    await picker.waitFor({ timeout: 10000 })
+    const settingsDone = await picker.getByRole('button', { name: /Settings, \d+ steps, done/i }).count()
+    record(
+      'Demo Back to guides reopens picker with Done mark',
+      settingsDone > 0,
+      `settingsDoneButtons=${settingsDone}`,
+    )
+
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    const guideFocused = await page.evaluate(() => {
+      const el = document.activeElement
+      return Boolean(el && el.classList?.contains('demo-tour-launcher'))
+    })
+    record(
+      'Demo picker Esc returns focus to Guide button',
+      guideFocused,
+    )
+
+    // Mobile Switch user: spotlight must hit header chip, not Home tab.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 })
+    await ensureLoggedIn('Demo')
+    if (await page.locator('.demo-tour-tooltip, .demo-tour-menu').count()) {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(200)
+    }
+    await startGuideSection('Search & Switch user')
+    const switchTip = page.locator('.demo-tour-tooltip')
+    // Advance to Switch user step.
+    for (let i = 0; i < 6; i++) {
+      await switchTip.waitFor({ state: 'visible', timeout: 15000 })
+      const title = ((await switchTip.locator('.demo-tour-title').textContent()) || '').trim()
+      if (title === 'Switch user') break
+      await switchTip.locator('.demo-tour-btn.is-primary').click({ timeout: 10000 })
+      await page.waitForTimeout(400)
+    }
+    await switchTip.locator('.demo-tour-title', { hasText: 'Switch user' }).waitFor({ timeout: 15000 })
+    await page.waitForTimeout(500)
+    const switchHit = await page.evaluate(() => {
+      const spot = document.querySelector('.demo-tour-spotlight')
+      const headerChip = document.querySelector('.app-topbar .user-chip.is-compact[data-tour="switch-user"]')
+        || document.querySelector('.user-chip.is-compact[data-tour="switch-user"]')
+      const tabBar = document.querySelector('.mobile-tab-bar')
+      if (!spot) return { ok: false, reason: 'no-spotlight' }
+      const s = spot.getBoundingClientRect()
+      const chip = headerChip?.getBoundingClientRect()
+      const tab = tabBar?.getBoundingClientRect()
+      const intersects = (a, b) => Boolean(a && b) && !(
+        a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top
+      )
+      const spotBox = { left: s.left, top: s.top, right: s.right, bottom: s.bottom }
+      const hitsChip = chip ? intersects(spotBox, {
+        left: chip.left, top: chip.top, right: chip.right, bottom: chip.bottom,
+      }) : false
+      const hitsTab = tab ? intersects(spotBox, {
+        left: tab.left, top: tab.top, right: tab.right, bottom: tab.bottom,
+      }) : false
+      return {
+        ok: hitsChip && !hitsTab && s.top < 120,
+        hitsChip,
+        hitsTab,
+        spot: [Math.round(s.left), Math.round(s.top), Math.round(s.width), Math.round(s.height)],
+        chipTop: chip ? Math.round(chip.top) : null,
+        body: document.querySelector('.demo-tour-body')?.textContent?.trim().slice(0, 80) || '',
+      }
+    })
+    record(
+      'Demo Switch user spotlight hits header chip at 390×844 (not tab bar)',
+      Boolean(switchHit.ok),
+      JSON.stringify(switchHit),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
   }
 
   await page.setViewportSize({ width: 1440, height: 900 })

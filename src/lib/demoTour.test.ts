@@ -8,17 +8,23 @@ import {
   EMPTY_TOUR_PROGRESS,
   TALL_TOUR_ANCHOR_SELECTORS,
   TOUR_SECTION_ORDER,
+  TOUR_SECTIONS,
   TOUR_STEPS,
   acknowledgeWelcome,
   completedSectionsAfterFullWalk,
   dismissWelcome,
+  flowAccessibleName,
+  isFlowDone,
+  isFullTourDone,
   lastStepIdForSection,
   markSectionComplete,
+  nextIncompleteFlowId,
   nonDemoUserIds,
   readTourProgress,
   resetTourProgress,
   sectionsCompletedByAdvance,
   stepsForSection,
+  tourFlowEntries,
   writeTourProgress,
 } from './demoTour.ts'
 
@@ -194,4 +200,104 @@ test('sample permit copy does not hard-promise VERIFY', () => {
   assert.match(pick.body, /Usually VERIFY/i)
   assert.match(pick.body, /live data can change/i)
   assert.doesNotMatch(pick.body, /expects VERIFY/i)
+})
+
+test('chrome-switch has mobile copy pointing at the header initials chip', () => {
+  const step = TOUR_STEPS.find(s => s.id === 'chrome-switch')
+  assert.ok(step)
+  assert.equal(step.anchor, '[data-tour="switch-user"]')
+  assert.ok(step.bodyNarrow)
+  assert.match(step.bodyNarrow, /Tap your initials at the top to switch user/i)
+})
+
+test('flow picker list order and step counts derive from step definitions', () => {
+  const flows = tourFlowEntries()
+  assert.equal(flows.length, 1 + TOUR_SECTIONS.length)
+  assert.equal(flows[0].id, 'full')
+  assert.equal(flows[0].label, 'Full tour')
+  assert.equal(flows[0].stepCount, TOUR_STEPS.length)
+  assert.ok(flows[0].description.trim().length > 0)
+
+  const sectionFlows = flows.slice(1)
+  assert.deepEqual(
+    sectionFlows.map(f => f.id),
+    [...TOUR_SECTION_ORDER],
+  )
+  for (const entry of sectionFlows) {
+    assert.equal(entry.stepCount, stepsForSection(entry.id as typeof TOUR_SECTION_ORDER[number]).length)
+    assert.ok(entry.description.trim().length > 0)
+    assert.match(entry.description, /[a-z]/i)
+  }
+
+  const jobs = flows.find(f => f.id === 'jobs')
+  assert.ok(jobs)
+  assert.equal(
+    flowAccessibleName(jobs, false),
+    `Jobs, ${jobs.stepCount} steps`,
+  )
+  assert.equal(
+    flowAccessibleName(jobs, true),
+    `Jobs, ${jobs.stepCount} steps, done`,
+  )
+})
+
+test('completing a single flow marks only that flow; full tour done = all flows', () => {
+  const storage = fakeStorage()
+  assert.equal(isFlowDone('jobs', readTourProgress(storage)), false)
+  assert.equal(isFullTourDone(readTourProgress(storage)), false)
+
+  markSectionComplete('jobs', storage)
+  const afterJobs = readTourProgress(storage)
+  assert.deepEqual(afterJobs.completedSections, ['jobs'])
+  assert.equal(isFlowDone('jobs', afterJobs), true)
+  assert.equal(isFlowDone('overview', afterJobs), false)
+  assert.equal(isFlowDone('full', afterJobs), false)
+  assert.equal(isFullTourDone(afterJobs), false)
+  assert.equal(nextIncompleteFlowId(afterJobs), 'overview')
+
+  for (const id of TOUR_SECTION_ORDER) {
+    markSectionComplete(id, storage)
+  }
+  const allDone = readTourProgress(storage)
+  for (const id of TOUR_SECTION_ORDER) {
+    assert.ok(allDone.completedSections.includes(id), `missing ${id}`)
+  }
+  assert.equal(allDone.completedSections.length, TOUR_SECTION_ORDER.length)
+  assert.equal(isFullTourDone(allDone), true)
+  assert.equal(isFlowDone('full', allDone), true)
+  assert.equal(nextIncompleteFlowId(allDone), 'full')
+})
+
+test('reset clears completed flows; old stored shape still parses', () => {
+  const storage = fakeStorage()
+  markSectionComplete('alerts', storage)
+  markSectionComplete('corridor', storage)
+  assert.ok(readTourProgress(storage).completedSections.includes('alerts'))
+
+  const reset = resetTourProgress(storage)
+  assert.equal(reset.welcomeSeen, true)
+  assert.equal(reset.tourDismissed, false)
+  assert.deepEqual(reset.completedSections, [])
+  assert.equal(isFullTourDone(reset), false)
+
+  // Legacy / partial shape (missing fields, unknown section) still loads.
+  storage.setItem(
+    DEMO_TOUR_STORAGE_KEY,
+    JSON.stringify({
+      welcomeSeen: 1,
+      completedSections: ['overview', 'not-a-section', 'jobs'],
+      // tourDismissed omitted
+    }),
+  )
+  const legacy = readTourProgress(storage)
+  assert.equal(legacy.welcomeSeen, true)
+  assert.equal(legacy.tourDismissed, false)
+  assert.deepEqual(legacy.completedSections, ['overview', 'jobs'])
+})
+
+test('jobs-card has setup fallback when no saved jobs', () => {
+  const step = TOUR_STEPS.find(s => s.id === 'jobs-card')
+  assert.ok(step?.setupFallback)
+  assert.match(step.setupFallback.ctaLabel, /Route check guide first/i)
+  assert.equal(step.setupFallback.ctaSection, 'route-check')
 })
