@@ -405,6 +405,24 @@
   outline: none;
 }
 
+.demo-tour-menu-fade {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  height: 36px;
+  margin-top: -36px;
+  pointer-events: none;
+  border-radius: 0 0 14px 14px;
+  background: linear-gradient(to top, var(--bg-card) 18%, transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.demo-tour-menu.is-scrollable:not(.is-scrolled-end) .demo-tour-menu-fade {
+  opacity: 1;
+}
+
 .demo-tour-menu .demo-tour-eyebrow {
   margin: 0 8px 4px;
 }
@@ -549,6 +567,65 @@
   .demo-tour-text-link {
     min-height: 32px;
     padding: 6px 8px;
+  }
+
+  /* Compact guide picker so all entries fit on common laptop heights. */
+  .demo-tour-menu {
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding: 10px 10px 8px;
+  }
+
+  .demo-tour-menu-title {
+    margin: 0 6px 8px;
+    font-size: 20px;
+    line-height: 1.2;
+  }
+
+  .demo-tour-menu .demo-tour-eyebrow {
+    margin: 0 6px 2px;
+  }
+
+  .demo-tour-menu-item {
+    gap: 8px;
+    min-height: 40px;
+    padding: 7px 8px;
+  }
+
+  .demo-tour-menu-item.is-primary-flow {
+    margin-bottom: 2px;
+  }
+
+  .demo-tour-menu-item-copy {
+    gap: 1px;
+  }
+
+  .demo-tour-menu-item-name {
+    font-size: 14px;
+    line-height: 1.2;
+  }
+
+  .demo-tour-menu-item-desc {
+    font-size: 12px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .demo-tour-menu-item-meta {
+    margin-top: 0;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .demo-tour-menu-footer {
+    margin-top: 4px;
+    padding-top: 4px;
+  }
+
+  .demo-tour-menu-reset {
+    min-height: 32px;
   }
 }
 

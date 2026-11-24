@@ -1057,7 +1057,7 @@ async function main() {
     const shell = dialog.querySelector('[data-overview-map]') || dialog.querySelector('.overview-routes-map-shell')
     const missing = Number(shell?.getAttribute('data-missing-geometry') || '-1')
     const chip = (dialog.querySelector('.permit-map-badge small')?.textContent || '')
-    return paths.length >= 1 && missing === 0 && !/have no map geometry/i.test(chip)
+    return paths.length >= 1 && missing === 0 && !/no (map geometry|saved track)/i.test(chip)
   }, null, { timeout: 45000 }).catch(() => {})
   const readyMapGeom = await page.evaluate(() => {
     const dialog = document.querySelector('[data-testid="overview-fullmap"]')
@@ -1070,10 +1070,10 @@ async function main() {
     }
   })
   record(
-    'Full-size Ready map draws ≥1 polyline and no “have no map geometry” chip',
+    'Full-size Ready map draws ≥1 polyline and no “no saved track” chip',
     readyMapGeom.paths >= 1
       && readyMapGeom.missing === 0
-      && !/have no map geometry/i.test(readyMapGeom.chip),
+      && !/no (map geometry|saved track)/i.test(readyMapGeom.chip),
     JSON.stringify(readyMapGeom),
   )
   await page.locator('[data-tour="overview-fullmap-minimise"]').click().catch(() => {})
@@ -1615,6 +1615,59 @@ async function main() {
           : !pickerNames.includes('Jobs') && !pickerNames.includes('Alerts & history')),
       JSON.stringify(entryMeta.map(e => ({ name: e.name, steps: e.steps }))),
     )
+
+    // Desktop heights: menu stays in viewport; items visible or scroll reveals Data partners.
+    const menuFitViewports = [
+      { width: 1440, height: 900 },
+      { width: 1440, height: 800 },
+      { width: 1280, height: 720 },
+    ]
+    for (const vp of menuFitViewports) {
+      await page.setViewportSize(vp)
+      await page.waitForTimeout(120)
+      if (!(await picker.isVisible().catch(() => false))) {
+        await page.getByRole('button', { name: 'Guide' }).click()
+        await picker.waitFor({ timeout: 10000 })
+      }
+      const fit = await picker.evaluate(el => {
+        const rect = el.getBoundingClientRect()
+        const items = Array.from(el.querySelectorAll('.demo-tour-menu-item'))
+        const allInView = items.every(item => {
+          const r = item.getBoundingClientRect()
+          return r.top >= rect.top - 1 && r.bottom <= rect.bottom + 1
+        })
+        const scrollable = el.scrollHeight > el.clientHeight + 1
+        let partnersVisible = false
+        if (scrollable) {
+          el.scrollTop = el.scrollHeight
+          const partners = items.find(item =>
+            /data partners/i.test(
+              (item.querySelector('.demo-tour-menu-item-name')?.textContent || '')
+              + (item.getAttribute('aria-label') || ''),
+            ),
+          )
+          if (partners) {
+            const pr = partners.getBoundingClientRect()
+            const mr = el.getBoundingClientRect()
+            partnersVisible = pr.top >= mr.top - 1 && pr.bottom <= mr.bottom + 1
+          }
+          el.scrollTop = 0
+        }
+        return {
+          bottomOk: rect.bottom <= window.innerHeight + 1,
+          allInView,
+          scrollable,
+          partnersVisible,
+        }
+      })
+      record(
+        `Demo guide menu fits ${vp.width}×${vp.height} (in-viewport or scrollable to Data partners)`,
+        fit.bottomOk && (fit.allInView || (fit.scrollable && fit.partnersVisible)),
+        JSON.stringify(fit),
+      )
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.waitForTimeout(80)
 
     if (FEATURE_JOBS_AND_ALERTS_PAGES) {
       await picker.getByRole('button', { name: /^Jobs\b/ }).click()

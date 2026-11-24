@@ -20,6 +20,7 @@ import {
   findGeometryPermit,
   groupAlertsByStatus,
   looksLikeCoordinates,
+  missingSavedTrackLabel,
   normaliseSummaryKey,
   overviewRouteIdForResult,
   parseOverviewFilters,
@@ -480,6 +481,7 @@ test('groupAlertsByStatus collapses identical change+detail rows', () => {
 
 test('routeDisplayTitle falls back when ends look like coordinates', () => {
   assert.equal(looksLikeCoordinates('53.5511, 9.9937'), true)
+  assert.equal(looksLikeCoordinates('48.1598, 11.5826 → 48.1598, 11.5826'), true)
   assert.equal(looksLikeCoordinates('Hamburg'), false)
   assert.equal(
     routeDisplayTitle({
@@ -491,9 +493,32 @@ test('routeDisplayTitle falls back when ends look like coordinates', () => {
     'Port night run',
   )
   assert.equal(
+    routeDisplayTitle({
+      origin: '48.1598, 11.5826',
+      destination: '48.1598, 11.5826',
+      routeLabel: '48.1598, 11.5826 → 48.1598, 11.5826',
+      permitName: 'luis-munich-cycling.gpx',
+    }),
+    'luis-munich-cycling',
+  )
+  assert.equal(
+    routeDisplayTitle({
+      origin: '48.1598, 11.5826',
+      destination: '48.1598, 11.5826',
+      routeLabel: '48.1598, 11.5826 → 48.1598, 11.5826',
+    }),
+    'Uploaded route',
+  )
+  assert.equal(
     routeDisplayTitle({ origin: 'Hof A9', destination: 'Bayreuth A9' }),
     'Hof A9 → Bayreuth A9',
   )
+  assert.equal(
+    routeDisplayTitle({ origin: 'Hamburg', destination: 'Hannover (A7)' }),
+    'Hamburg → Hannover (A7)',
+  )
+  assert.equal(missingSavedTrackLabel(1, 2), '1 of 2 routes has no saved track')
+  assert.equal(missingSavedTrackLabel(2, 2), '2 of 2 routes have no saved track')
 })
 
 test('sortOverviewRoutes orders by severity then departure then last checked', () => {

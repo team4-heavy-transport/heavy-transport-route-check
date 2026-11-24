@@ -9,7 +9,11 @@ import {
   VERDICT_TRACK_COLORS,
   type OverviewVerdict,
 } from '../lib/overviewTracks'
-import { countRoutesWithoutGeometry, type OverviewRoute } from '../lib/overviewRoutes'
+import {
+  countRoutesWithoutGeometry,
+  missingSavedTrackLabel,
+  type OverviewRoute,
+} from '../lib/overviewRoutes'
 
 export type OverviewMapTrack = {
   id: string
@@ -253,7 +257,7 @@ export default function OverviewRoutesMap({
 
   const resolvedSubtitle =
     loadedMissing > 0 && routes.length > 0
-      ? `${loadedMissing} of ${routes.length} routes have no map geometry`
+      ? missingSavedTrackLabel(loadedMissing, routes.length)
       : badgeSubtitle
 
   return (
