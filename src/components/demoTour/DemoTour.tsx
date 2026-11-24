@@ -86,8 +86,13 @@ export default function DemoTour() {
     placement: 'center',
   })
   const [liveMessage, setLiveMessage] = useState('')
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 60, left: 16 })
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number; maxHeight?: number }>({
+    top: 60,
+    left: 16,
+  })
   const [menuFocusId, setMenuFocusId] = useState<TourFlowId>('full')
+  const [menuScrollable, setMenuScrollable] = useState(false)
+  const [menuScrolledEnd, setMenuScrolledEnd] = useState(true)
   const [guideSlot, setGuideSlot] = useState<Element | null>(null)
   const [appDialogOpen, setAppDialogOpen] = useState(false)
   const [dynamicBody, setDynamicBody] = useState<string | null>(null)
@@ -173,17 +178,31 @@ export default function DemoTour() {
     [persist],
   )
 
+  const updateMenuScrollAffordance = useCallback(() => {
+    const el = menuRef.current
+    if (!el) return
+    const scrollable = el.scrollHeight > el.clientHeight + 1
+    const atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+    setMenuScrollable(scrollable)
+    setMenuScrolledEnd(!scrollable || atEnd)
+  }, [])
+
   const openMenu = useCallback((focusId?: TourFlowId) => {
     const btn = launcherRef.current
     const narrow = isNarrowViewport()
     if (btn && !narrow) {
       const rect = btn.getBoundingClientRect()
       const width = 360
+      const top = rect.bottom + 8
       const left = Math.min(
         Math.max(12, rect.right - width),
         window.innerWidth - width - 12,
       )
-      setMenuPos({ top: rect.bottom + 8, left })
+      setMenuPos({
+        top,
+        left,
+        maxHeight: Math.max(160, window.innerHeight - top - 16),
+      })
     }
     setMenuFocusId(focusId ?? 'full')
     setMode({ kind: 'menu' })
@@ -621,6 +640,56 @@ export default function DemoTour() {
     }
   }, [mode, currentStep, dynamicBody, appDialogOpen, menuFocusId])
 
+  // Desktop guide menu: keep max-height under the viewport and show a scroll fade.
+  useLayoutEffect(() => {
+    if (mode.kind !== 'menu') {
+      setMenuScrollable(false)
+      setMenuScrolledEnd(true)
+      return
+    }
+
+    const reposition = () => {
+      if (isNarrowViewport()) return
+      const btn = launcherRef.current
+      if (!btn) return
+      const rect = btn.getBoundingClientRect()
+      const width = 360
+      const top = rect.bottom + 8
+      const left = Math.min(
+        Math.max(12, rect.right - width),
+        window.innerWidth - width - 12,
+      )
+      setMenuPos({
+        top,
+        left,
+        maxHeight: Math.max(160, window.innerHeight - top - 16),
+      })
+    }
+
+    reposition()
+    const raf = window.requestAnimationFrame(() => updateMenuScrollAffordance())
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [mode.kind, updateMenuScrollAffordance])
+
+  useEffect(() => {
+    if (mode.kind !== 'menu') return
+    const el = menuRef.current
+    if (!el) return
+    updateMenuScrollAffordance()
+    const onScroll = () => updateMenuScrollAffordance()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => updateMenuScrollAffordance()) : null
+    ro?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      ro?.disconnect()
+    }
+  }, [mode.kind, menuPos.maxHeight, updateMenuScrollAffordance])
+
   // Interactive advance watchers.
   useEffect(() => {
     if (mode.kind !== 'tour' || !currentStep || setupFallback) return
@@ -941,12 +1010,20 @@ export default function DemoTour() {
           />
           <div
             ref={menuRef}
-            className="demo-tour-menu"
+            className={`demo-tour-menu${menuScrollable ? ' is-scrollable' : ''}${menuScrolledEnd ? ' is-scrolled-end' : ''}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby={menuTitleId}
             tabIndex={-1}
-            style={isNarrowViewport() ? undefined : { top: menuPos.top, left: menuPos.left }}
+            style={
+              isNarrowViewport()
+                ? undefined
+                : {
+                    top: menuPos.top,
+                    left: menuPos.left,
+                    maxHeight: menuPos.maxHeight,
+                  }
+            }
           >
             <span className="demo-tour-eyebrow">Demo guide</span>
             <h2 id={menuTitleId} className="demo-tour-menu-title">Guides</h2>
@@ -954,18 +1031,22 @@ export default function DemoTour() {
               {FLOW_ENTRIES.map((entry, index) => {
                 const done = isFlowDone(entry.id, progress)
                 const primary = entry.id === 'full'
+                const accessible = `${flowAccessibleName(entry, done)}. ${entry.description}`
                 return (
                   <li key={entry.id}>
                     <button
                       ref={el => { menuItemRefs.current[index] = el }}
                       type="button"
                       className={`demo-tour-menu-item${primary ? ' is-primary-flow' : ''}${done ? ' is-done' : ''}`}
-                      aria-label={flowAccessibleName(entry, done)}
+                      aria-label={accessible}
+                      title={entry.description}
                       onClick={() => startFlow(entry.id)}
                     >
                       <span className="demo-tour-menu-item-copy">
                         <span className="demo-tour-menu-item-name">{entry.label}</span>
-                        <span className="demo-tour-menu-item-desc">{entry.description}</span>
+                        <span className="demo-tour-menu-item-desc" title={entry.description}>
+                          {entry.description}
+                        </span>
                         <span className="demo-tour-menu-item-meta">
                           {entry.stepCount} step{entry.stepCount === 1 ? '' : 's'}
                         </span>
@@ -993,6 +1074,7 @@ export default function DemoTour() {
                 Reset progress
               </button>
             </div>
+            <div className="demo-tour-menu-fade" aria-hidden="true" />
           </div>
         </>
       )}

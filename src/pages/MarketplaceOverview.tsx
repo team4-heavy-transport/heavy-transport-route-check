@@ -33,6 +33,8 @@ import {
   filterOverviewRoutes,
   filtersAreActive,
   groupAlertsByStatus,
+  looksLikeCoordinates,
+  missingSavedTrackLabel,
   parseOverviewFilters,
   type OverviewFilters,
   type OverviewRoute,
@@ -95,7 +97,12 @@ function RouteTitleBlock({
 
 function routeMetaLine(route: OverviewRoute): string {
   const parts: string[] = []
-  if (route.permitNumber) parts.push(route.permitNumber)
+  if (route.permitNumber) {
+    parts.push(route.permitNumber)
+  } else if (looksLikeCoordinates(route.origin) || looksLikeCoordinates(route.destination)) {
+    const file = (route.permitName || '').trim()
+    parts.push(file ? `Uploaded GPX · ${file}` : 'Uploaded GPX')
+  }
   if (route.lastCheckedAt) parts.push(`Last checked ${formatBerlinDateTime(route.lastCheckedAt)}`)
   else parts.push('Not checked yet')
   if (route.source === 'example') parts.push('Example')
@@ -453,7 +460,7 @@ function FullSizeMapDialog({
 
   const badgeSubtitle =
     geometryStats.missing > 0
-      ? `${geometryStats.missing} of ${geometryStats.total} routes have no map geometry`
+      ? missingSavedTrackLabel(geometryStats.missing, geometryStats.total)
       : mode === 'all'
         ? 'Click a route to focus'
         : selected?.permitNumber || 'Single route'
@@ -754,7 +761,7 @@ export default function MarketplaceOverview() {
 
   const mapBadgeSubtitle =
     geometryStats.missing > 0
-      ? `${geometryStats.missing} of ${geometryStats.total} routes have no map geometry`
+      ? missingSavedTrackLabel(geometryStats.missing, geometryStats.total)
       : 'Coloured by status'
 
   return (

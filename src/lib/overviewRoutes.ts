@@ -43,6 +43,8 @@ export type OverviewRoute = {
   jobId?: string
   permitId?: string
   routeLabel?: string
+  /** Uploaded GPX / permit file name when known (display only). */
+  permitName?: string
 }
 
 export type OverviewStatusFilter = RouteVerdict
@@ -77,9 +79,31 @@ const MS_DAY = 24 * 60 * 60 * 1000
 const COORD_PAIR_RE =
   /^\s*-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?\s*$/
 
+/** Strip common track extensions from an uploaded file name for display titles. */
+export function prettifyUploadedRouteName(value: string | null | undefined): string {
+  const trimmed = (value || '').trim()
+  if (!trimmed) return ''
+  return trimmed.replace(/\.(gpx|kml|geojson)$/i, '')
+}
+
 export function looksLikeCoordinates(value: string | null | undefined): boolean {
   if (!value) return false
-  return COORD_PAIR_RE.test(value.trim())
+  const trimmed = value.trim()
+  if (COORD_PAIR_RE.test(trimmed)) return true
+  // Upload-derived labels like "48.16, 11.58 → 48.16, 11.58".
+  const parts = trimmed.split(/\s*(?:→|->)\s*/)
+  if (parts.length === 2) {
+    return COORD_PAIR_RE.test(parts[0].trim()) && COORD_PAIR_RE.test(parts[1].trim())
+  }
+  return false
+}
+
+function firstHumanLabel(...candidates: Array<string | null | undefined>): string {
+  for (const candidate of candidates) {
+    const trimmed = (candidate || '').trim()
+    if (trimmed && !looksLikeCoordinates(trimmed)) return trimmed
+  }
+  return ''
 }
 
 /**
@@ -97,21 +121,26 @@ export function routeDisplayTitle(opts: {
   const destination = (opts.destination || '').trim()
   const coords = looksLikeCoordinates(origin) || looksLikeCoordinates(destination)
   if (coords) {
-    const fallback =
-      (opts.jobName || '').trim() ||
-      (opts.corridor || '').trim() ||
-      (opts.routeLabel || '').trim() ||
-      (opts.permitName || '').trim()
-    if (fallback) return fallback
+    return (
+      firstHumanLabel(opts.jobName, opts.corridor, opts.routeLabel) ||
+      prettifyUploadedRouteName(opts.permitName) ||
+      'Uploaded route'
+    )
   }
   if (origin && destination) return `${origin} → ${destination}`
   if (origin || destination) return origin || destination
   return (
-    (opts.jobName || '').trim() ||
-    (opts.routeLabel || '').trim() ||
+    firstHumanLabel(opts.jobName, opts.routeLabel) ||
+    prettifyUploadedRouteName(opts.permitName) ||
     (opts.permitName || '').trim() ||
     'Route'
   )
+}
+
+/** Map chip when some overview routes have no stored track geometry. */
+export function missingSavedTrackLabel(missing: number, total: number): string {
+  if (missing === 1) return `1 of ${total} routes has no saved track`
+  return `${missing} of ${total} routes have no saved track`
 }
 
 export function evidenceToSummarySeverity(item: Pick<RouteEvidence, 'state'>): OverviewSummarySeverity {
@@ -605,6 +634,7 @@ export function buildOverviewRoutes(input: {
       jobId: job.id,
       permitId: permit?.id,
       routeLabel,
+      permitName: job.routeFileName || undefined,
     })
   }
 
@@ -675,6 +705,7 @@ export function buildOverviewRoutes(input: {
       source: 'check',
       permitId: permit?.id,
       routeLabel: latest.routeLabel,
+      permitName: latest.permitName || undefined,
     })
   }
 
